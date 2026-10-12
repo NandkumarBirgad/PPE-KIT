@@ -1,0 +1,30 @@
+{
+  "name": "vite-project",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "postinstall": "node patch-rollup.js"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.0.9",
+    "axios": "^1.7.9",
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.5",
+    "recharts": "^2.15.1",
+    "socket.io-client": "^4.8.1",
+    "tailwindcss": "^4.0.9"
+  },
+  "devDependencies": {
+    "@rollup/wasm-node": "^4.64.5",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.2.0"
+  }
+}
