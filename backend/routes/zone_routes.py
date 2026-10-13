@@ -228,7 +228,7 @@ def get_notifications():
         try:
             ncol = get_notifications_col()
             if ncol is not None:
-                docs = list(ncol.find().sort("created_at", -1).limit(30))
+                docs = list(ncol.find().sort("created_at", -1).limit(40))
                 res = []
                 for d in docs:
                     d["_id"] = str(d["_id"])
@@ -240,5 +240,53 @@ def get_notifications():
         except Exception:
             pass
 
-    return jsonify(mem_notifications[:30]), 200
+    return jsonify(mem_notifications[:40]), 200
+
+# Get all buzzers
+@zone_bp.route("/api/buzzers", methods=["GET"])
+def get_buzzers():
+    buzzers = []
+    for z in mem_zones:
+        buzzers.append({
+            "zoneId": str(z.get("_id")),
+            "zoneName": z.get("name"),
+            "zoneCode": z.get("code"),
+            "buzzerEnabled": z.get("buzzerEnabled", True),
+            "buzzerSound": z.get("buzzerSound", "siren"),
+            "active": z.get("active", True),
+            "status": "ARMED" if z.get("buzzerEnabled", True) else "DISABLED",
+            "supervisor": z.get("supervisor", {})
+        })
+    return jsonify(buzzers), 200
+
+# Silence all buzzers
+@zone_bp.route("/api/buzzers/silence-all", methods=["POST"])
+@token_required
+def silence_all_buzzers():
+    for z in mem_zones:
+        z["buzzerEnabled"] = False
+    return jsonify({"message": "All zone floor buzzers have been silenced.", "success": True}), 200
+
+# Get all supervisors with zone mapping
+@zone_bp.route("/api/supervisors", methods=["GET"])
+def get_supervisors():
+    supervisors = []
+    for z in mem_zones:
+        sup = z.get("supervisor")
+        if sup:
+            supervisors.append({
+                "id": f"sup_{z.get('_id')}",
+                "name": sup.get("name"),
+                "email": sup.get("email"),
+                "phone": sup.get("phone"),
+                "shift": sup.get("shift", "General Shift"),
+                "alertChannel": sup.get("alertChannel", "WhatsApp & SMS"),
+                "zoneId": str(z.get("_id")),
+                "zoneName": z.get("name"),
+                "zoneCode": z.get("code"),
+                "active": z.get("active", True),
+                "buzzerEnabled": z.get("buzzerEnabled", True)
+            })
+    return jsonify(supervisors), 200
+
 

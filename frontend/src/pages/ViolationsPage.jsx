@@ -163,8 +163,9 @@ export default function ViolationsPage() {
               <thead className="bg-slate-950/80 text-slate-400 border-b border-slate-800">
                 <tr>
                   <th className="py-3.5 px-4 font-semibold">Incident Time</th>
-                  <th className="py-3.5 px-4 font-semibold">Zone</th>
-                  <th className="py-3.5 px-4 font-semibold">Source</th>
+                  <th className="py-3.5 px-4 font-semibold">Worker (कोणाचा)</th>
+                  <th className="py-3.5 px-4 font-semibold">Zone & Location (कोठून)</th>
+                  <th className="py-3.5 px-4 font-semibold">Camera Source</th>
                   <th className="py-3.5 px-4 font-semibold">Missing PPE</th>
                   <th className="py-3.5 px-4 font-semibold">Status</th>
                   <th className="py-3.5 px-4 font-semibold">Review State</th>
@@ -177,8 +178,25 @@ export default function ViolationsPage() {
                     <td className="py-3.5 px-4 text-slate-300 font-mono text-[11px]">
                       {new Date(e.timestamp || e.createdAt).toLocaleString()}
                     </td>
-                    <td className="py-3.5 px-4 font-semibold text-white">{e.zoneName || 'General Zone'}</td>
-                    <td className="py-3.5 px-4 capitalize text-slate-400">{e.sourceType || 'Webcam'}</td>
+                    <td className="py-3.5 px-4">
+                      <div className="font-bold text-amber-300">
+                        {e.workerTag || e.personId || 'Worker #1'}
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono">
+                        {e.personId ? `Track ID: ${e.personId}` : 'Tracked Body'}
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <div className="font-semibold text-white">{e.zoneName || 'General Zone'}</div>
+                      <div className="text-[10px] text-slate-400">
+                        {e.location || e.cameraName || 'Deck Sensor'}
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <span className="font-mono text-[11px] text-sky-400">
+                        {e.cameraName || e.sourceType || 'Webcam'}
+                      </span>
+                    </td>
                     <td className="py-3.5 px-4">
                       <div className="flex flex-wrap gap-1">
                         {e.missingPPE && e.missingPPE.length > 0 ? (
@@ -223,7 +241,7 @@ export default function ViolationsPage() {
                           setSelectedEvent(e);
                           setReviewNotes(e.reviewerNotes || '');
                         }}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-400 font-semibold border border-slate-700 transition"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-400 font-semibold border border-slate-700 transition cursor-pointer"
                       >
                         <Eye className="w-3.5 h-3.5" /> Details
                       </button>
@@ -292,15 +310,52 @@ export default function ViolationsPage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4 text-xs">
-                <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
-                  <span className="text-slate-400 block mb-1">Zone Location</span>
-                  <span className="font-bold text-white">{selectedEvent.zoneName || 'Monitored Zone'}</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+                    👤 Worker Identity (कोणाचा)
+                  </span>
+                  <div className="font-bold text-amber-300 text-sm">
+                    {selectedEvent.workerTag || selectedEvent.personId || 'Tracked Worker #1'}
+                  </div>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {selectedEvent.personId ? `Target: ${selectedEvent.personId}` : 'AI Optical Tracking'}
+                  </span>
                 </div>
-                <div className="p-3 rounded-lg bg-slate-950 border border-slate-800">
-                  <span className="text-slate-400 block mb-1">Timestamp</span>
-                  <span className="font-mono text-white">
+
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+                    📍 Zone & Location (कोठून)
+                  </span>
+                  <div className="font-bold text-white text-sm">
+                    {selectedEvent.zoneName || 'Heavy Assembly Bay 01'}
+                  </div>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    {selectedEvent.location || selectedEvent.cameraName || 'Deck Column #4'}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+                    📹 Camera Feed Source
+                  </span>
+                  <div className="font-mono text-sky-400 font-semibold">
+                    {selectedEvent.cameraName || selectedEvent.sourceType || 'Optical CCTV Stream'}
+                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    Camera ID: {selectedEvent.cameraId || 'cam_01'}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                  <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+                    🕒 Incident Time & Marshall
+                  </span>
+                  <div className="font-mono text-white text-[11px]">
                     {new Date(selectedEvent.timestamp || selectedEvent.createdAt).toLocaleString()}
+                  </div>
+                  <span className="text-[10px] text-emerald-400 block mt-0.5">
+                    Supervisor: {selectedEvent.supervisorName || 'Floor Safety Officer'}
                   </span>
                 </div>
               </div>

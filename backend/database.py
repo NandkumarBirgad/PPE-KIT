@@ -11,6 +11,7 @@ mem_users = []
 mem_zones = []
 mem_detections = []
 mem_notifications = []
+mem_cameras = []
 
 def init_db():
     global db_client, db_instance, is_mongo_connected
@@ -36,23 +37,57 @@ def get_status():
     return is_mongo_connected
 
 def seed_defaults():
-    # 1. Seed Admin & Reviewer
-    admin_data = {
-        "name": "System Safety Administrator",
-        "email": "admin@ppe.com",
-        "password_hash": generate_password_hash("Admin@123"),
-        "role": "admin",
-        "active": True,
-        "created_at": datetime.datetime.now(datetime.timezone.utc)
-    }
-    reviewer_data = {
-        "name": "Compliance Inspector Dave",
-        "email": "reviewer@ppe.com",
-        "password_hash": generate_password_hash("Reviewer@123"),
-        "role": "reviewer",
-        "active": True,
-        "created_at": datetime.datetime.now(datetime.timezone.utc)
-    }
+    # 1. Seed Super Admin & Zone Supervisors
+    default_users = [
+        {
+            "_id": "usr_admin",
+            "name": "System Safety Administrator",
+            "email": "admin@ppe.com",
+            "password_hash": generate_password_hash("Admin@123"),
+            "role": "SUPER_ADMIN",
+            "active": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc)
+        },
+        {
+            "_id": "usr_sup1",
+            "name": "Vikram Patil",
+            "email": "supervisor@ppe.com",
+            "password_hash": generate_password_hash("Supervisor@123"),
+            "role": "ZONE_SUPERVISOR",
+            "assignedZoneId": "zone_01",
+            "assignedZoneName": "Heavy Assembly Bay 01",
+            "phone": "+91 98234 56789",
+            "shift": "Morning (08:00 - 16:00)",
+            "active": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc)
+        },
+        {
+            "_id": "usr_sup2",
+            "name": "Pooja Kulkarni",
+            "email": "pooja@ppe.com",
+            "password_hash": generate_password_hash("Supervisor@123"),
+            "role": "ZONE_SUPERVISOR",
+            "assignedZoneId": "zone_02",
+            "assignedZoneName": "Chemical & Paint Processing",
+            "phone": "+91 98220 11223",
+            "shift": "General (09:00 - 18:00)",
+            "active": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc)
+        },
+        {
+            "_id": "usr_reviewer",
+            "name": "Compliance Inspector Dave",
+            "email": "reviewer@ppe.com",
+            "password_hash": generate_password_hash("Reviewer@123"),
+            "role": "ZONE_SUPERVISOR",
+            "assignedZoneId": "zone_03",
+            "assignedZoneName": "General Construction Deck",
+            "phone": "+91 98211 44556",
+            "shift": "Night (16:00 - 00:00)",
+            "active": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc)
+        }
+    ]
     
     default_zones = [
         {
@@ -129,22 +164,85 @@ def seed_defaults():
         }
     ]
 
+    default_cameras = [
+        {
+            "_id": "cam_01",
+            "name": "Bay 01 Primary HD Cam",
+            "zoneId": "zone_01",
+            "zoneName": "Heavy Assembly Bay 01",
+            "status": "ONLINE",
+            "sourceType": "webcam",
+            "streamUrl": "rtsp://192.168.1.101/live",
+            "resolution": "1080p HD",
+            "fps": 25,
+            "location": "Heavy Fabrication Deck",
+            "active": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc)
+        },
+        {
+            "_id": "cam_02",
+            "name": "Chemical Line Cam 02",
+            "zoneId": "zone_02",
+            "zoneName": "Chemical & Paint Processing",
+            "status": "ONLINE",
+            "sourceType": "ip_camera",
+            "streamUrl": "rtsp://192.168.1.102/live",
+            "resolution": "1080p HD",
+            "fps": 30,
+            "location": "Solvents & Spray Booths",
+            "active": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc)
+        },
+        {
+            "_id": "cam_03",
+            "name": "Scaffold Deck Cam 03",
+            "zoneId": "zone_03",
+            "zoneName": "General Construction Deck",
+            "status": "ONLINE",
+            "sourceType": "webcam",
+            "streamUrl": "rtsp://192.168.1.103/live",
+            "resolution": "720p HD",
+            "fps": 25,
+            "location": "Civil Engineering Deck",
+            "active": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc)
+        },
+        {
+            "_id": "cam_04",
+            "name": "Gate 4 Logistics & Perimeter Cam",
+            "zoneId": "zone_01",
+            "zoneName": "Heavy Assembly Bay 01",
+            "status": "OFFLINE",
+            "sourceType": "cctv_nvr",
+            "streamUrl": "rtsp://192.168.1.104/live",
+            "resolution": "1080p HD",
+            "fps": 20,
+            "location": "Perimeter Gate 4",
+            "active": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc)
+        }
+    ]
+
     if is_mongo_connected and db_instance is not None:
         try:
             users_col = db_instance["users"]
-            if not users_col.find_one({"email": "admin@ppe.com"}):
-                users_col.insert_one(admin_data)
-                print("✅ Seeded default Admin user in MongoDB: admin@ppe.com")
-            if not users_col.find_one({"email": "reviewer@ppe.com"}):
-                users_col.insert_one(reviewer_data)
-                print("✅ Seeded default Reviewer user in MongoDB: reviewer@ppe.com")
+            for du in default_users:
+                existing = users_col.find_one({"email": du["email"]})
+                if not existing:
+                    users_col.insert_one(dict(du))
+                else:
+                    users_col.update_one({"email": du["email"]}, {"$set": {
+                        "role": du["role"],
+                        "assignedZoneId": du.get("assignedZoneId"),
+                        "assignedZoneName": du.get("assignedZoneName")
+                    }})
+            print("✅ Synchronized default Admin and Supervisor users in MongoDB")
             
             zones_col = db_instance["zones"]
             if zones_col.count_documents({}) == 0:
                 zones_col.insert_many(default_zones)
                 print("✅ Seeded 3 default facility zones with supervisor & buzzer configs in MongoDB")
             else:
-                # Update existing zones if supervisor is missing
                 for dz in default_zones:
                     zones_col.update_one(
                         {"code": dz["code"]},
@@ -155,14 +253,24 @@ def seed_defaults():
                             "buzzerSound": dz["buzzerSound"]
                         }}
                     )
+
+            cams_col = db_instance["cameras"]
+            if cams_col.count_documents({}) == 0:
+                cams_col.insert_many(default_cameras)
+                print("✅ Seeded 4 default CCTV cameras in MongoDB")
         except Exception as e:
             print(f"⚠️ Seeding warning: {e}")
     else:
         # Seed in-memory
-        if not any(u["email"] == "admin@ppe.com" for u in mem_users):
-            mem_users.append({"_id": "usr_admin", **admin_data})
-        if not any(u["email"] == "reviewer@ppe.com" for u in mem_users):
-            mem_users.append({"_id": "usr_reviewer", **reviewer_data})
+        for du in default_users:
+            found_idx = next((i for i, u in enumerate(mem_users) if u["email"] == du["email"]), None)
+            if found_idx is None:
+                mem_users.append(dict(du))
+            else:
+                mem_users[found_idx]["role"] = du["role"]
+                mem_users[found_idx]["assignedZoneId"] = du.get("assignedZoneId")
+                mem_users[found_idx]["assignedZoneName"] = du.get("assignedZoneName")
+
         if len(mem_zones) == 0:
             mem_zones.extend(default_zones)
         else:
@@ -177,6 +285,100 @@ def seed_defaults():
                             mem_zones[idx]["buzzerEnabled"] = dz["buzzerEnabled"]
                         if "buzzerSound" not in z:
                             mem_zones[idx]["buzzerSound"] = dz["buzzerSound"]
+
+        if len(mem_cameras) == 0:
+            mem_cameras.extend(default_cameras)
+
+        # Seed realistic default detections / violations with Worker and Location info
+        default_detections = [
+            {
+                "_id": "det_seed_01",
+                "workerTag": "WRK-042 (Operator: Mahesh S.)",
+                "personId": "Worker #1",
+                "zoneId": "zone_01",
+                "zoneName": "Heavy Assembly Bay 01",
+                "zoneCode": "BAY-01",
+                "cameraId": "cam_01",
+                "cameraName": "Bay 01 Primary HD Cam",
+                "location": "Heavy Fabrication Deck, South Column #4",
+                "sourceType": "CCTV RTSP",
+                "missingPPE": ["helmet"],
+                "detectedClasses": [{"name": "Vest", "confidence": 0.94}, {"name": "safety_shoe", "confidence": 0.89}],
+                "complianceStatus": "VIOLATION",
+                "reviewStatus": "PENDING",
+                "reviewerNotes": "",
+                "supervisorName": "Vikram Patil",
+                "personCount": 1,
+                "timestamp": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=14),
+                "createdAt": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=14)
+            },
+            {
+                "_id": "det_seed_02",
+                "workerTag": "WRK-108 (Helper: Ramesh G.)",
+                "personId": "Worker #2",
+                "zoneId": "zone_01",
+                "zoneName": "Heavy Assembly Bay 01",
+                "zoneCode": "BAY-01",
+                "cameraId": "cam_01",
+                "cameraName": "Bay 01 Primary HD Cam",
+                "location": "Overhead Gantry Crane Loading Dock",
+                "sourceType": "CCTV RTSP",
+                "missingPPE": ["helmet", "vest"],
+                "detectedClasses": [{"name": "safety_shoe", "confidence": 0.82}],
+                "complianceStatus": "VIOLATION",
+                "reviewStatus": "PENDING",
+                "reviewerNotes": "",
+                "supervisorName": "Vikram Patil",
+                "personCount": 1,
+                "timestamp": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=38),
+                "createdAt": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=38)
+            },
+            {
+                "_id": "det_seed_03",
+                "workerTag": "WRK-215 (Chemist: Pooja K.)",
+                "personId": "Worker #1",
+                "zoneId": "zone_02",
+                "zoneName": "Chemical & Paint Processing",
+                "zoneCode": "CHEM-02",
+                "cameraId": "cam_02",
+                "cameraName": "Chemical Line Cam 02",
+                "location": "Solvents & Spray Booths, Vat Area",
+                "sourceType": "IP Camera",
+                "missingPPE": ["goggles", "mask"],
+                "detectedClasses": [{"name": "helmet", "confidence": 0.96}, {"name": "Vest", "confidence": 0.91}],
+                "complianceStatus": "VIOLATION",
+                "reviewStatus": "PENDING",
+                "reviewerNotes": "",
+                "supervisorName": "Pooja Kulkarni",
+                "personCount": 1,
+                "timestamp": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1, minutes=12),
+                "createdAt": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1, minutes=12)
+            },
+            {
+                "_id": "det_seed_04",
+                "workerTag": "WRK-077 (Scaffolder: Sachin D.)",
+                "personId": "Worker #3",
+                "zoneId": "zone_03",
+                "zoneName": "General Construction Deck",
+                "zoneCode": "CONST-03",
+                "cameraId": "cam_03",
+                "cameraName": "Scaffold Deck Cam 03",
+                "location": "Civil Engineering Deck, Level 2",
+                "sourceType": "Webcam",
+                "missingPPE": ["vest"],
+                "detectedClasses": [{"name": "helmet", "confidence": 0.95}],
+                "complianceStatus": "VIOLATION",
+                "reviewStatus": "APPROVED",
+                "reviewerNotes": "Worker issued new reflective jacket from emergency locker.",
+                "supervisorName": "Sachin Deshmukh",
+                "personCount": 1,
+                "timestamp": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=2, minutes=5),
+                "createdAt": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=2, minutes=5)
+            }
+        ]
+
+        if len(mem_detections) == 0:
+            mem_detections.extend(default_detections)
 
 # Safe collections accessor
 def get_users_col():
@@ -198,3 +400,9 @@ def get_notifications_col():
     if is_mongo_connected and db_instance is not None:
         return db_instance["notifications"]
     return None
+
+def get_cameras_col():
+    if is_mongo_connected and db_instance is not None:
+        return db_instance["cameras"]
+    return None
+

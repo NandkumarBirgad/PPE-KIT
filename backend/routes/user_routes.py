@@ -39,16 +39,18 @@ def create_user():
     name = data.get("name", "").strip()
     email = data.get("email", "").strip().lower()
     password = data.get("password", "")
-    role = data.get("role", "reviewer")
-
-    if not name or not email or not password:
-        return jsonify({"message": "Name, email and password are required"}), 400
+    raw_role = data.get("role", "ZONE_SUPERVISOR")
+    norm_role = "SUPER_ADMIN" if str(raw_role).upper() in ["SUPER_ADMIN", "ADMIN"] else "ZONE_SUPERVISOR"
 
     new_user = {
         "name": name,
         "email": email,
         "password_hash": generate_password_hash(password),
-        "role": role,
+        "role": norm_role,
+        "assignedZoneId": data.get("assignedZoneId"),
+        "assignedZoneName": data.get("assignedZoneName"),
+        "phone": data.get("phone", ""),
+        "shift": data.get("shift", "General Shift"),
         "active": True,
         "created_at": datetime.datetime.now(datetime.timezone.utc)
     }
@@ -81,8 +83,13 @@ def update_user(id):
     data = request.get_json() or {}
     update_data = {}
     if "name" in data: update_data["name"] = data["name"]
-    if "role" in data: update_data["role"] = data["role"]
+    if "role" in data: 
+        update_data["role"] = "SUPER_ADMIN" if str(data["role"]).upper() in ["SUPER_ADMIN", "ADMIN"] else "ZONE_SUPERVISOR"
     if "active" in data: update_data["active"] = data["active"]
+    if "assignedZoneId" in data: update_data["assignedZoneId"] = data["assignedZoneId"]
+    if "assignedZoneName" in data: update_data["assignedZoneName"] = data["assignedZoneName"]
+    if "phone" in data: update_data["phone"] = data["phone"]
+    if "shift" in data: update_data["shift"] = data["shift"]
 
     if is_mongo_connected:
         try:

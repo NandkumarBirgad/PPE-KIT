@@ -36,9 +36,10 @@ echo  - Local Dashboard:      http://localhost:5173
 echo  - Network Dashboard:    http://10.217.143.95:5173 (Open on company tablets/mobiles)
 echo  - Backend API:          http://localhost:5000
 echo.
-echo Default Logins:
-echo  - Admin:    admin@ppe.com    / Admin@123
-echo  - Reviewer: reviewer@ppe.com / Reviewer@123
+echo Default Role-Based Logins:
+echo  - Super Admin:      admin@ppe.com      / Admin@123      (-> /admin/dashboard)
+echo  - Zone Supervisor:  supervisor@ppe.com / Supervisor@123 (-> /supervisor/dashboard)
+echo  - Chem Supervisor:  pooja@ppe.com      / Supervisor@123 (-> /supervisor/dashboard)
 echo ======================================================================
 echo.
 timeout /t 5

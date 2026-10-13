@@ -19,9 +19,20 @@ export default function ProtectedRoute({ allowedRoles }) {
     return <Navigate to="/login" replace />;
   }
 
-  if (allowedRoles && !allowedRoles.includes(user?.role)) {
-    return <Navigate to="/dashboard" replace />;
+  if (allowedRoles) {
+    const userRole = user?.role;
+    const isAllowed = allowedRoles.includes(userRole) || 
+      (allowedRoles.includes('SUPER_ADMIN') && userRole === 'admin') ||
+      (allowedRoles.includes('ZONE_SUPERVISOR') && ['supervisor', 'reviewer'].includes(userRole));
+
+    if (!isAllowed) {
+      if (userRole === 'SUPER_ADMIN' || userRole === 'admin') {
+        return <Navigate to="/admin/dashboard" replace />;
+      }
+      return <Navigate to="/supervisor/dashboard" replace />;
+    }
   }
 
   return <Outlet />;
 }
+
