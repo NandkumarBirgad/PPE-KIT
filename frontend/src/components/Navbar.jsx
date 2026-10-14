@@ -16,15 +16,19 @@ import {
   Building2, 
   Flame, 
   Siren,
-  Power
+  Power,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { getSocket } from '../services/socket';
 import api, { AI_BASE_URL } from '../services/api';
 import { playIndustrialSiren, playWarningHorn, stopAllSounds, isSirenActive } from '../services/soundAlerts';
 
 export default function Navbar({ toggleSidebar }) {
   const { user } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [backendHealthy, setBackendHealthy] = useState(true);
@@ -254,6 +258,25 @@ export default function Navbar({ toggleSidebar }) {
             <span className="text-slate-400">YOLO</span>
           </div>
         </div>
+
+        {/* White & Blue Theme Toggle Button */}
+        <button
+          onClick={toggleTheme}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition cursor-pointer shadow-sm hover:scale-[1.02] active:scale-[0.98] bg-blue-50/90 hover:bg-blue-100 text-blue-700 border-blue-200"
+          title={theme === 'white-blue' ? 'Switch to Dark Mode' : 'Switch to White & Blue UI'}
+        >
+          {theme === 'white-blue' ? (
+            <>
+              <Sun className="w-3.5 h-3.5 text-blue-600 animate-spin-slow" />
+              <span className="hidden sm:inline font-mono text-[11px] font-bold">White / Blue</span>
+            </>
+          ) : (
+            <>
+              <Moon className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline font-mono text-[11px]">Dark Mode</span>
+            </>
+          )}
+        </button>
 
         {/* Notifications Bell */}
         <div className="relative">

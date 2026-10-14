@@ -468,8 +468,15 @@ export default function LiveMonitoringPage() {
 
   return (
     <div className="space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      {/* Top Header Banner with Live Factory Surveillance Backdrop */}
+      <div className="p-4 sm:p-5 rounded-2xl border border-slate-800 shadow-xl relative overflow-hidden bg-slate-900 admin-hero-banner">
+        <div 
+          className="absolute inset-0 bg-cover bg-right lg:bg-center bg-no-repeat opacity-15 pointer-events-none"
+          style={{ backgroundImage: "url('/images/factory_safety_bg.jpg')" }}
+        />
+        <div className="absolute inset-0 bg-gradient-to-r from-slate-900 via-slate-900/90 to-transparent admin-hero-gradient pointer-events-none" />
+        <div className="absolute top-0 left-0 right-0 h-1 hazard-stripes opacity-40 z-10"></div>
+        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl lg:text-2xl font-bold text-white tracking-tight">
@@ -519,6 +526,7 @@ export default function LiveMonitoringPage() {
           </button>
         </div>
       </div>
+    </div>
 
       {/* Camera Error Alert */}
       {cameraError && (

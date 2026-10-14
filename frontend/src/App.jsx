@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminSidebar from './components/AdminSidebar';
 import SupervisorSidebar from './components/SupervisorSidebar';
@@ -63,7 +64,8 @@ function SupervisorLayout() {
 // Dynamic Role-Based Redirection
 function RoleRedirect() {
   const { user } = useAuth();
-  if (user?.role === 'SUPER_ADMIN' || user?.role === 'admin') {
+  const rawRole = (user?.role || '').trim().toUpperCase();
+  if (['SUPER_ADMIN', 'ADMIN', 'SUPERADMIN'].includes(rawRole)) {
     return <Navigate to="/admin/dashboard" replace />;
   }
   return <Navigate to="/supervisor/dashboard" replace />;
@@ -71,55 +73,57 @@ function RoleRedirect() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          {/* Public Common Login Route */}
-          <Route path="/login" element={<LoginPage />} />
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            {/* Public Common Login Route */}
+            <Route path="/login" element={<LoginPage />} />
 
-          {/* Root dynamic redirect */}
-          <Route element={<ProtectedRoute />}>
-            <Route path="/" element={<RoleRedirect />} />
-            <Route path="/dashboard" element={<RoleRedirect />} />
-            <Route path="/live" element={<Navigate to="/admin/live" replace />} />
-            <Route path="/violations" element={<Navigate to="/admin/violations" replace />} />
-            <Route path="/zones" element={<Navigate to="/admin/zones" replace />} />
-            <Route path="/settings" element={<Navigate to="/admin/settings" replace />} />
-            <Route path="/reports" element={<Navigate to="/admin/reports" replace />} />
-          </Route>
-
-          {/* 1. SUPER_ADMIN Protected Routes */}
-          <Route element={<ProtectedRoute allowedRoles={['SUPER_ADMIN', 'admin']} />}>
-            <Route element={<AdminLayout />}>
-              <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
-              <Route path="/admin/cameras" element={<CameraManagementPage />} />
-              <Route path="/admin/zones" element={<ZoneManagementPage />} />
-              <Route path="/admin/supervisors" element={<SupervisorManagementPage />} />
-              <Route path="/admin/violations" element={<ViolationsPage />} />
-              <Route path="/admin/notifications" element={<AdminNotificationsPage />} />
-              <Route path="/admin/buzzers" element={<BuzzerManagementPage />} />
-              <Route path="/admin/reports" element={<ReportsPage />} />
-              <Route path="/admin/users" element={<UserManagementPage />} />
-              <Route path="/admin/settings" element={<SettingsPage />} />
-              <Route path="/admin/live" element={<LiveMonitoringPage />} />
+            {/* Root dynamic redirect */}
+            <Route element={<ProtectedRoute />}>
+              <Route path="/" element={<RoleRedirect />} />
+              <Route path="/dashboard" element={<RoleRedirect />} />
+              <Route path="/live" element={<Navigate to="/admin/live" replace />} />
+              <Route path="/violations" element={<Navigate to="/admin/violations" replace />} />
+              <Route path="/zones" element={<Navigate to="/admin/zones" replace />} />
+              <Route path="/settings" element={<Navigate to="/admin/settings" replace />} />
+              <Route path="/reports" element={<Navigate to="/admin/reports" replace />} />
             </Route>
-          </Route>
 
-          {/* 2. ZONE_SUPERVISOR Protected Routes */}
-          <Route element={<ProtectedRoute allowedRoles={['ZONE_SUPERVISOR', 'supervisor', 'reviewer', 'SUPER_ADMIN', 'admin']} />}>
-            <Route element={<SupervisorLayout />}>
-              <Route path="/supervisor/dashboard" element={<SupervisorDashboardPage />} />
-              <Route path="/supervisor/live" element={<LiveMonitoringPage />} />
-              <Route path="/supervisor/violations" element={<SupervisorViolationsPage />} />
-              <Route path="/supervisor/buzzers" element={<SupervisorBuzzerPage />} />
-              <Route path="/supervisor/notifications" element={<SupervisorNotificationsPage />} />
+            {/* 1. SUPER_ADMIN Protected Routes */}
+            <Route element={<ProtectedRoute allowedRoles={['SUPER_ADMIN', 'admin']} />}>
+              <Route element={<AdminLayout />}>
+                <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
+                <Route path="/admin/cameras" element={<CameraManagementPage />} />
+                <Route path="/admin/zones" element={<ZoneManagementPage />} />
+                <Route path="/admin/supervisors" element={<SupervisorManagementPage />} />
+                <Route path="/admin/violations" element={<ViolationsPage />} />
+                <Route path="/admin/notifications" element={<AdminNotificationsPage />} />
+                <Route path="/admin/buzzers" element={<BuzzerManagementPage />} />
+                <Route path="/admin/reports" element={<ReportsPage />} />
+                <Route path="/admin/users" element={<UserManagementPage />} />
+                <Route path="/admin/settings" element={<SettingsPage />} />
+                <Route path="/admin/live" element={<LiveMonitoringPage />} />
+              </Route>
             </Route>
-          </Route>
 
-          {/* Catch-all route */}
-          <Route path="*" element={<RoleRedirect />} />
-        </Routes>
-      </BrowserRouter>
-    </AuthProvider>
+            {/* 2. ZONE_SUPERVISOR Protected Routes */}
+            <Route element={<ProtectedRoute allowedRoles={['ZONE_SUPERVISOR', 'supervisor', 'reviewer', 'SUPER_ADMIN', 'admin']} />}>
+              <Route element={<SupervisorLayout />}>
+                <Route path="/supervisor/dashboard" element={<SupervisorDashboardPage />} />
+                <Route path="/supervisor/live" element={<LiveMonitoringPage />} />
+                <Route path="/supervisor/violations" element={<SupervisorViolationsPage />} />
+                <Route path="/supervisor/buzzers" element={<SupervisorBuzzerPage />} />
+                <Route path="/supervisor/notifications" element={<SupervisorNotificationsPage />} />
+              </Route>
+            </Route>
+
+            {/* Catch-all route */}
+            <Route path="*" element={<RoleRedirect />} />
+          </Routes>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

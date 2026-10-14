@@ -12,6 +12,7 @@ import {
   Volume2, 
   VolumeX, 
   CheckCircle2, 
+  UserCheck,
   Clock, 
   TrendingUp, 
   ArrowUpRight,
@@ -170,77 +171,190 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* Industrial Plant Banner & Header */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900/95 to-slate-950 border border-slate-800 shadow-2xl relative overflow-hidden">
-        <div className="absolute top-0 left-0 right-0 h-1 hazard-stripes opacity-40"></div>
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div>
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <span className="px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[11px] font-mono font-bold flex items-center gap-1.5">
-                <Building2 className="w-3.5 h-3.5" />
+      {/* ========================================================
+          HERO SECTION: Live EHS Safety Command Center
+          ======================================================== */}
+      <div className="rounded-3xl border border-blue-100 bg-white p-6 sm:p-8 shadow-xl relative overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+          
+          {/* Left Information & Telemetry Summary */}
+          <div className="lg:col-span-7 space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-3 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold font-mono flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5 text-blue-600" />
                 BHARAT HEAVY ENG. • PLANT UNIT 04
               </span>
-              <span className="px-2 py-0.5 rounded-full bg-slate-800 text-sky-400 border border-slate-700 text-[10px] font-bold">
-                ISO 45001:2018 EHS AUDIT ACTIVE
-              </span>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold">
-                OSHA 1910 COMPLIANT
+              <span className="px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                AI VISION MESH ACTIVE
               </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-2 flex items-center gap-2">
-              Industrial EHS Safety Operations Center
-            </h1>
-            <p className="text-xs text-slate-400 mt-1">
-              Optical AI surveillance grid, automated hazard sirens, supervisor dispatch telemetry, and zero-accident compliance monitoring.
-            </p>
+
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                Industrial EHS Safety Operations Center
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-500 mt-1 leading-relaxed">
+                Optical AI surveillance monitors shop-floor workers for Safety Helmets, High-Vis Vests, and Safety Glasses in real-time. Zero-incident compliance with instant floor buzzer sirens.
+              </p>
+            </div>
+
+            {/* Quick Plant Fact Box */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 rounded-full bg-emerald-500 animate-ping"></div>
+                <span className="font-bold text-slate-800">
+                  Plant Safety Compliance: <span className="text-emerald-600 font-black text-sm">{summary.overallComplianceRate}% [COMPLIANT]</span>
+                </span>
+              </div>
+              <div className="text-slate-500 font-mono text-[11px]">
+                Zero Lost Time Injuries • 142 Safe Days
+              </div>
+            </div>
+
+            {/* Direct Action Buttons */}
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Link
+                to="/admin/live"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-lg shadow-blue-500/25 transition cursor-pointer"
+              >
+                <Camera className="w-4 h-4" />
+                <span>Open Live CCTV Matrix</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+              <button
+                onClick={handleExportCSV}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold border border-slate-300 shadow-sm transition cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Export Audit CSV</span>
+              </button>
+              <button
+                onClick={fetchAdminDashboard}
+                disabled={loading}
+                className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold transition cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <span>Sync</span>
+              </button>
+            </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              onClick={handleExportCSV}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition cursor-pointer"
-              title="Download Incident Audit Trail"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Export Audit CSV</span>
-            </button>
-            <button
-              onClick={fetchAdminDashboard}
-              disabled={loading}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              <span>Sync Telemetry</span>
-            </button>
-            <Link
-              to="/admin/live"
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-lg shadow-sky-600/30 transition"
-            >
-              <Camera className="w-3.5 h-3.5" />
+          {/* Right Image Showcase Card (CLEAR & VIVID) */}
+          <div className="lg:col-span-5 relative group">
+            <div className="relative rounded-2xl overflow-hidden border-2 border-blue-200 shadow-xl aspect-video lg:aspect-[4/3] bg-slate-900">
+              <img 
+                src="/images/safety_command_bg.jpg" 
+                alt="EHS Command Operations Center"
+                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" 
+              />
+              {/* Live Badge */}
+              <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-slate-900/85 backdrop-blur-md text-white text-[10px] font-mono font-bold flex items-center gap-1.5 border border-white/20">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                <span>LIVE 24/7 EHS COMMAND</span>
+              </div>
+              <div className="absolute bottom-0 inset-x-0 p-3 bg-gradient-to-t from-slate-950/90 via-slate-950/60 to-transparent text-white">
+                <p className="text-xs font-bold leading-tight">Chakan Plant Unit 04 Surveillance Mesh</p>
+                <p className="text-[10px] text-blue-200">8 High-Definition Optical Streams Active</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ========================================================
+          FAST-ACTION FEATURE CARDS (Ultra Easy Navigation)
+          ======================================================== */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* 1. Live Matrix */}
+        <Link
+          to="/admin/live"
+          className="p-5 rounded-2xl bg-white border border-blue-100 hover:border-blue-500 shadow-sm hover:shadow-md transition-all group flex flex-col justify-between"
+        >
+          <div className="flex items-center justify-between">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold group-hover:bg-blue-600 group-hover:text-white transition-colors">
+              <Camera className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-mono">
+              {summary.onlineCameras} Active Feeds
+            </span>
+          </div>
+          <div className="mt-4">
+            <h2 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center justify-between">
               <span>Live CCTV Matrix</span>
-            </Link>
+              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">Watch live AI camera streams across Bay 1 to 4</p>
           </div>
-        </div>
+        </Link>
 
-        {/* Plant Key Safety Indicators Ticker */}
-        <div className="mt-4 pt-4 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-          <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 font-mono">
-            <span className="text-[10px] text-slate-500 uppercase block">Lost Time Injury (LTI)</span>
-            <span className="text-emerald-400 font-bold text-sm">0 INCIDENTS (142 DAYS)</span>
+        {/* 2. Violations Log */}
+        <Link
+          to="/admin/violations"
+          className="p-5 rounded-2xl bg-white border border-rose-100 hover:border-rose-500 shadow-sm hover:shadow-md transition-all group flex flex-col justify-between"
+        >
+          <div className="flex items-center justify-between">
+            <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold group-hover:bg-rose-600 group-hover:text-white transition-colors">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full font-mono ${
+              summary.unacknowledgedViolations > 0 ? 'bg-rose-100 text-rose-700 animate-pulse' : 'bg-emerald-50 text-emerald-700'
+            }`}>
+              {summary.unacknowledgedViolations} Pending
+            </span>
           </div>
-          <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 font-mono">
-            <span className="text-[10px] text-slate-500 uppercase block">Safe Man-Hours Today</span>
-            <span className="text-sky-400 font-bold text-sm">1,480 MAN-HOURS</span>
+          <div className="mt-4">
+            <h2 className="text-sm font-bold text-slate-900 group-hover:text-rose-600 transition-colors flex items-center justify-between">
+              <span>Violation Audit Log</span>
+              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">Review missing helmet & vest incidents with snapshots</p>
           </div>
-          <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 font-mono">
-            <span className="text-[10px] text-slate-500 uppercase block">Floor Marshall Coverage</span>
-            <span className="text-amber-400 font-bold text-sm">100% POSTED ON SHIFT</span>
+        </Link>
+
+        {/* 3. Siren & Buzzer Control */}
+        <Link
+          to="/admin/buzzers"
+          className="p-5 rounded-2xl bg-white border border-amber-100 hover:border-amber-500 shadow-sm hover:shadow-md transition-all group flex flex-col justify-between"
+        >
+          <div className="flex items-center justify-between">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold group-hover:bg-amber-600 group-hover:text-white transition-colors">
+              <Volume2 className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-mono">
+              105 dB Armed
+            </span>
           </div>
-          <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-800 font-mono">
-            <span className="text-[10px] text-slate-500 uppercase block">Network AI Vision Uptime</span>
-            <span className="text-emerald-400 font-bold text-sm">99.8% LIVE MESH</span>
+          <div className="mt-4">
+            <h2 className="text-sm font-bold text-slate-900 group-hover:text-amber-600 transition-colors flex items-center justify-between">
+              <span>Industrial Sirens</span>
+              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">Trigger or silence audible alarms on shop floors</p>
           </div>
-        </div>
+        </Link>
+
+        {/* 4. Safety Marshals & Zones */}
+        <Link
+          to="/admin/supervisors"
+          className="p-5 rounded-2xl bg-white border border-emerald-100 hover:border-emerald-500 shadow-sm hover:shadow-md transition-all group flex flex-col justify-between"
+        >
+          <div className="flex items-center justify-between">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+              <UserCheck className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-mono">
+              {summary.activeSupervisors} on Shift
+            </span>
+          </div>
+          <div className="mt-4">
+            <h2 className="text-sm font-bold text-slate-900 group-hover:text-emerald-600 transition-colors flex items-center justify-between">
+              <span>Safety Marshals</span>
+              <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">Supervisors assigned to Bays 01, 02 & 03</p>
+          </div>
+        </Link>
       </div>
 
       {/* Primary KPI Metrics Grid */}

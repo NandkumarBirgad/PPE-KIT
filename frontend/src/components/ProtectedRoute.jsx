@@ -20,13 +20,19 @@ export default function ProtectedRoute({ allowedRoles }) {
   }
 
   if (allowedRoles) {
-    const userRole = user?.role;
-    const isAllowed = allowedRoles.includes(userRole) || 
-      (allowedRoles.includes('SUPER_ADMIN') && userRole === 'admin') ||
-      (allowedRoles.includes('ZONE_SUPERVISOR') && ['supervisor', 'reviewer'].includes(userRole));
+    const rawRole = (user?.role || '').trim().toUpperCase();
+    const isSuperAdmin = ['SUPER_ADMIN', 'ADMIN', 'SUPERADMIN'].includes(rawRole);
+    const isSupervisor = ['ZONE_SUPERVISOR', 'SUPERVISOR', 'REVIEWER'].includes(rawRole);
+
+    const isAllowed = allowedRoles.some((r) => {
+      const normR = r.trim().toUpperCase();
+      if (normR === 'SUPER_ADMIN' || normR === 'ADMIN') return isSuperAdmin;
+      if (normR === 'ZONE_SUPERVISOR' || normR === 'SUPERVISOR') return isSupervisor || isSuperAdmin;
+      return normR === rawRole;
+    });
 
     if (!isAllowed) {
-      if (userRole === 'SUPER_ADMIN' || userRole === 'admin') {
+      if (isSuperAdmin) {
         return <Navigate to="/admin/dashboard" replace />;
       }
       return <Navigate to="/supervisor/dashboard" replace />;
