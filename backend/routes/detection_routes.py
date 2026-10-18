@@ -17,6 +17,7 @@ from database import (
 from ai_engine.ppe_model import decode_image, encode_image_to_base64, detect_ppe_in_frame
 from ai_engine.compliance import evaluate_compliance, draw_compliance_annotations
 from auth import token_required
+from storage import upload_evidence_image, is_cloudinary_enabled
 
 detection_bp = Blueprint("detection_bp", __name__)
 
@@ -52,12 +53,13 @@ def detect_image():
     if img is None:
         return jsonify({"message": "Invalid or missing image payload"}), 400
 
+    h, w = img.shape[:2]
     # 2. Run YOLO Inference
     raw_annotated, detected_objects, persons = detect_ppe_in_frame(img, confidence_threshold=conf_thresh)
 
-    # 3. Compliance Evaluation with Person Association
+    # 3. Compliance Evaluation with Body Scan Awareness (only checks scanned body parts)
     compliance_status, missing_ppe, evaluated_persons = evaluate_compliance(
-        persons, detected_objects, required_ppe, confidence_threshold=conf_thresh
+        persons, detected_objects, required_ppe, confidence_threshold=conf_thresh, img_shape=(h, w)
     )
 
     # 4. Draw HUD Visual Annotations
@@ -115,9 +117,10 @@ def detect_video():
                 break
 
             if frame_count % frame_interval == 0:
+                fh, fw = frame.shape[:2]
                 _, detected_objects, persons = detect_ppe_in_frame(frame, confidence_threshold=0.35)
                 comp_status, missing_ppe, evaluated_persons = evaluate_compliance(
-                    persons, detected_objects, required_ppe
+                    persons, detected_objects, required_ppe, img_shape=(fh, fw)
                 )
 
                 if comp_status == "VIOLATION":
@@ -234,6 +237,16 @@ def create_detection():
     zone_name = data.get("zoneName", "General Monitored Zone")
     missing_ppe = data.get("missingPPE", [])
 
+    # Upload evidence snapshot to Cloudinary cloud storage
+    raw_evidence = data.get("evidenceImageBase64")
+    image_url = None
+    if raw_evidence:
+        try:
+            image_url = upload_evidence_image(raw_evidence, folder="ppe_violations")
+        except Exception as e:
+            print("Evidence upload warning:", e)
+            image_url = raw_evidence
+
     event_doc = {
         "zoneId": zone_id,
         "zoneName": zone_name,
@@ -248,7 +261,8 @@ def create_detection():
         "personCount": int(data.get("personCount", 1)),
         "reviewStatus": "PENDING",
         "reviewerNotes": "",
-        "evidenceImageReference": data.get("evidenceImageBase64"),
+        "imageUrl": image_url,
+        "evidenceImageReference": image_url or raw_evidence,
         "processingMetadata": data.get("processingMetadata", {}),
         "createdAt": datetime.datetime.now(datetime.timezone.utc)
     }

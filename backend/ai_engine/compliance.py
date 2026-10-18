@@ -51,15 +51,111 @@ def associate_ppe_with_persons(persons, detected_objects):
 
     return persons
 
-def evaluate_compliance(persons, detected_objects, required_ppe, confidence_threshold=0.35):
+PPE_BODY_MAPPING = {
+    "helmet": "head",
+    "hard hat": "head",
+    "hardhat": "head",
+    "safety helmet": "head",
+    "mask": "face",
+    "face mask": "face",
+    "respirator": "face",
+    "goggles": "face",
+    "glasses": "face",
+    "safety glasses": "face",
+    "eye wear": "face",
+    "vest": "torso",
+    "safety vest": "torso",
+    "reflective vest": "torso",
+    "jacket": "torso",
+    "boots": "feet",
+    "shoes": "feet",
+    "safety boots": "feet",
+    "safety_shoe": "feet",
+    "footwear": "feet",
+    "gloves": "hands",
+    "glove": "hands",
+    "safety gloves": "hands"
+}
+
+def detect_scanned_body_parts(person_box, img_shape=None, worn_ppe=None):
     """
-    Evaluates compliance against required zone PPE.
+    Determines which anatomical body regions are actually scanned / visible
+    within the camera frame for a given person bounding box.
+    Returns: dict with boolean flags and list of scanned regions.
+    """
+    worn_ppe = [w.lower() for w in (worn_ppe or [])]
+    px1, py1, px2, py2 = person_box
+    pw = max(px2 - px1, 1)
+    ph = max(py2 - py1, 1)
+    aspect_ratio = ph / float(pw)
+
+    img_h = img_shape[0] if img_shape else max(py2 + 20, 480)
+    img_w = img_shape[1] if img_shape else max(px2 + 20, 640)
+
+    # 1. Head: Is the upper portion of the person inside the frame?
+    # Visible unless person starts very low down (e.g. only legs/knees in frame)
+    is_head_scanned = (py1 < img_h * 0.65) and (ph >= 35) or any("helm" in w or "hat" in w for w in worn_ppe)
+
+    # 2. Face: Visible if head is scanned and enough vertical resolution
+    is_face_scanned = is_head_scanned and (ph >= 50)
+
+    # 3. Torso: Visible if person extends below head region
+    is_torso_scanned = (ph >= 60 and py2 > py1 + int(ph * 0.30)) or any("vest" in w or "jacket" in w for w in worn_ppe)
+
+    # 4. Feet / Lower Body (Boots / Shoes):
+    # Feet are NOT scanned if:
+    # - Bounding box is cut off at the bottom edge of the camera view (py2 near bottom edge)
+    # - Aspect ratio is waist-up / half-body / seated (ph / pw < 2.1 and py2 >= img_h * 0.60)
+    # - Box height is small relative to frame height and positioned at bottom
+    has_boots_detected = any(b in worn_ppe for b in ["boots", "shoes", "safety boots", "footwear", "safety_shoe"])
+
+    is_cut_off_at_bottom = py2 >= (img_h - 25)
+    is_half_body_ratio = (aspect_ratio < 2.1) and (py2 >= img_h * 0.60)
+
+    if has_boots_detected:
+        is_feet_scanned = True
+    elif is_cut_off_at_bottom or is_half_body_ratio:
+        is_feet_scanned = False
+    else:
+        # Full body standing in frame with visible clearance above the bottom edge
+        is_feet_scanned = (aspect_ratio >= 2.0) and (py2 < img_h - 35)
+
+    # 5. Hands:
+    has_gloves_detected = any("glov" in w for w in worn_ppe)
+    if has_gloves_detected:
+        is_hands_scanned = True
+    elif is_cut_off_at_bottom or (px1 <= 15) or (px2 >= img_w - 15):
+        # Hands/wrists cut off by frame boundaries
+        is_hands_scanned = False
+    else:
+        is_hands_scanned = (aspect_ratio >= 2.0) and (ph >= 120)
+
+    scanned_regions = []
+    if is_head_scanned: scanned_regions.append("head")
+    if is_face_scanned: scanned_regions.append("face")
+    if is_torso_scanned: scanned_regions.append("torso")
+    if is_feet_scanned: scanned_regions.append("feet")
+    if is_hands_scanned: scanned_regions.append("hands")
+
+    return {
+        "head": is_head_scanned,
+        "face": is_face_scanned,
+        "torso": is_torso_scanned,
+        "feet": is_feet_scanned,
+        "hands": is_hands_scanned,
+        "scanned_regions": scanned_regions
+    }
+
+def evaluate_compliance(persons, detected_objects, required_ppe, confidence_threshold=0.35, img_shape=None):
+    """
+    Evaluates compliance against required zone PPE ONLY for body parts
+    that are actually scanned / visible in the camera frame.
     Returns:
     - compliance_status: 'COMPLIANT' | 'VIOLATION' | 'UNCERTAIN'
     - missing_ppe: list of missing items
     - evaluated_persons: list of persons with individual compliance status
     """
-    required_set = set([r.lower() for r in (required_ppe or ['helmet', 'vest'])])
+    raw_required = [r.lower() for r in (required_ppe or ['helmet', 'vest'])]
 
     if not persons:
         # If no person detected, check if any PPE detected in empty scene
@@ -67,7 +163,7 @@ def evaluate_compliance(persons, detected_objects, required_ppe, confidence_thre
             return "UNCERTAIN", [], []
         # Fallback evaluation based on detected objects
         detected_set = set([d["class"].lower() for d in detected_objects])
-        missing = list(required_set - detected_set)
+        missing = [r for r in raw_required if r not in detected_set]
         status = "COMPLIANT" if len(missing) == 0 else "VIOLATION"
         return status, missing, []
 
@@ -79,11 +175,40 @@ def evaluate_compliance(persons, detected_objects, required_ppe, confidence_thre
     all_missing_set = set()
 
     for person in persons:
+        p_box = person["bbox"]
         worn_set = set([w.lower() for w in person["worn_ppe"]])
-        missing = list(required_set - worn_set)
-        person["missing_ppe"] = missing
 
-        # Check uncertainty (e.g. low person confidence or partial body crop)
+        # 1. Determine which body parts are actually scanned in the camera
+        body_scan = detect_scanned_body_parts(p_box, img_shape=img_shape, worn_ppe=person["worn_ppe"])
+        scanned_regions = body_scan["scanned_regions"]
+
+        # 2. Filter required PPE to ONLY items corresponding to scanned body parts!
+        applicable_required = []
+        ignored_unscanned_ppe = []
+
+        for req in raw_required:
+            req_region = PPE_BODY_MAPPING.get(req)
+            if not req_region:
+                if any(b in req for b in ['boot', 'shoe']): req_region = 'feet'
+                elif any(v in req for v in ['vest', 'jacket']): req_region = 'torso'
+                elif any(h in req for h in ['helm', 'hat']): req_region = 'head'
+                elif any(g in req for g in ['glov']): req_region = 'hands'
+                elif any(f in req for f in ['gogg', 'glass', 'mask']): req_region = 'face'
+                else: req_region = 'torso'
+
+            if req_region in scanned_regions:
+                applicable_required.append(req)
+            else:
+                ignored_unscanned_ppe.append(req)
+
+        # 3. Calculate missing items ONLY from applicable scanned required items!
+        missing = [req for req in applicable_required if req not in worn_set]
+        person["missing_ppe"] = missing
+        person["scanned_body_parts"] = scanned_regions
+        person["applicable_required_ppe"] = applicable_required
+        person["ignored_unscanned_ppe"] = ignored_unscanned_ppe
+
+        # 4. Check uncertainty (e.g. low person confidence or partial body crop)
         if person.get("confidence", 1.0) < confidence_threshold + 0.05:
             person["compliant"] = False
             person["uncertain"] = True
@@ -111,6 +236,7 @@ def draw_compliance_annotations(img, persons, detected_objects, compliance_statu
     """
     Renders professional bounding boxes and HUD labels on the image:
     - Persons: Green (Compliant), Red (Violation), Amber (Uncertain)
+    - Shows scanned body regions on compliant tags
     - Detected PPE items: Cyan / Green boxes with label tag
     """
     output = img.copy()
@@ -134,7 +260,9 @@ def draw_compliance_annotations(img, persons, detected_objects, compliance_statu
 
         if is_compliant:
             color = (0, 220, 100) # Emerald Green
-            status_text = f"WORKER #{i+1}: COMPLIANT"
+            scanned_parts = p.get("scanned_body_parts", [])
+            scanned_label = "+".join(scanned_parts).upper() if scanned_parts else "SCANNED"
+            status_text = f"WORKER #{i+1}: COMPLIANT ({scanned_label})"
         elif is_uncertain:
             color = (0, 190, 255) # Amber
             status_text = f"WORKER #{i+1}: UNCERTAIN"
@@ -147,8 +275,8 @@ def draw_compliance_annotations(img, persons, detected_objects, compliance_statu
         cv2.rectangle(output, (x1, y1), (x2, y2), color, 3)
 
         # Header banner
-        banner_w = max(len(status_text) * 10 + 15, 140)
+        banner_w = max(len(status_text) * 10 + 15, 150)
         cv2.rectangle(output, (x1, max(y1 - 26, 0)), (x1 + banner_w, y1), color, -1)
-        cv2.putText(output, status_text, (x1 + 6, max(y1 - 8, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(output, status_text, (x1 + 6, max(y1 - 8, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 2, cv2.LINE_AA)
 
     return output

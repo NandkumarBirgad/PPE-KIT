@@ -1,16 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Camera, 
-  CameraOff, 
-  Play, 
   Square, 
   ShieldCheck, 
   ShieldAlert, 
   HelpCircle, 
-  Settings2, 
   Volume2, 
   VolumeX, 
-  RefreshCw, 
   Save, 
   AlertTriangle,
   HardHat,
@@ -18,60 +14,17 @@ import {
   CheckCircle2,
   Clock,
   Layers,
-  LayoutGrid,
-  Maximize2,
-  Columns,
   UserCheck,
   Phone,
   Mail,
   Send,
   Bell,
-  Radio,
-  Sliders,
+  Zap,
   Sparkles,
-  Zap
+  RefreshCw,
+  Video
 } from 'lucide-react';
 import api, { AI_BASE_URL } from '../services/api';
-
-// Pre-configured simulated industrial cameras for multi-feed grid
-const INDUSTRIAL_CHANNELS = [
-  {
-    id: 'cam_01',
-    name: 'Cam 1 - Assembly Bay 01',
-    location: 'Heavy Fabrication Deck',
-    zoneCode: 'BAY-01',
-    fps: '25 FPS',
-    resolution: '1080p HD',
-    type: 'Overhead Wide PTZ',
-  },
-  {
-    id: 'cam_02',
-    name: 'Cam 2 - Chemical Processing',
-    location: 'Solvents & Paint Bay',
-    zoneCode: 'CHEM-02',
-    fps: '30 FPS',
-    resolution: '1080p HD',
-    type: 'Explosion-Proof Dome',
-  },
-  {
-    id: 'cam_03',
-    name: 'Cam 3 - Scaffolding Deck',
-    location: 'Civil Engineering Deck',
-    zoneCode: 'CONST-03',
-    fps: '25 FPS',
-    resolution: '720p HD',
-    type: 'High-Altitude CCTV',
-  },
-  {
-    id: 'cam_04',
-    name: 'Cam 4 - Material Storage & Gate',
-    location: 'Perimeter Entry Gate',
-    zoneCode: 'GATE-04',
-    fps: '20 FPS',
-    resolution: '1080p HD',
-    type: 'Thermal Perimeter Cam',
-  },
-];
 
 export default function LiveMonitoringPage() {
   const [isStreaming, setIsStreaming] = useState(false);
@@ -80,24 +33,17 @@ export default function LiveMonitoringPage() {
   const [zones, setZones] = useState([]);
   const [selectedZoneId, setSelectedZoneId] = useState('');
   const [selectedZone, setSelectedZone] = useState(null);
-  const [frameInterval, setFrameInterval] = useState(800); // ms
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [buzzerMuted, setBuzzerMuted] = useState(false);
   const [aiStatus, setAiStatus] = useState('Checking...');
   const [savingSnapshot, setSavingSnapshot] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState('');
+  const [autoNotifySupervisor, setAutoNotifySupervisor] = useState(true);
+  const [dispatchStatus, setDispatchStatus] = useState('');
 
-  // Multi-Camera Feed States
+  // Available camera hardware devices
   const [availableVideoDevices, setAvailableVideoDevices] = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
-  const [activeChannelId, setActiveChannelId] = useState('cam_01');
-  const [layoutMode, setLayoutMode] = useState('single'); // 'single' | 'split' | 'quad'
-
-  // Zone Supervisor Notification & Buzzer States
-  const [autoNotifySupervisor, setAutoNotifySupervisor] = useState(true);
-  const [supervisorNotifications, setSupervisorNotifications] = useState([]);
-  const [dispatchStatus, setDispatchStatus] = useState('');
-  const [isBuzzerSounding, setIsBuzzerSounding] = useState(false);
-  const [buzzerMuted, setBuzzerMuted] = useState(false);
 
   // AI Detection State
   const [detectionResult, setDetectionResult] = useState({
@@ -115,7 +61,6 @@ export default function LiveMonitoringPage() {
   const streamRef = useRef(null);
   const detectionTimerRef = useRef(null);
   const audioContextRef = useRef(null);
-  const sirenIntervalRef = useRef(null);
   const lastAlertDispatchTimeRef = useRef(0);
 
   // Web Audio Industrial Siren Synthesizer
@@ -128,10 +73,8 @@ export default function LiveMonitoringPage() {
       const ctx = audioContextRef.current;
       if (ctx.state === 'suspended') ctx.resume();
 
-      // Dual oscillator modulated industrial warble siren
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-
       const soundType = selectedZone?.buzzerSound || 'siren';
 
       if (soundType === 'horn') {
@@ -140,14 +83,7 @@ export default function LiveMonitoringPage() {
         osc.frequency.linearRampToValueAtTime(310, ctx.currentTime + 0.35);
         gain.gain.setValueAtTime(0.2, ctx.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-      } else if (soundType === 'alarm') {
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(950, ctx.currentTime);
-        osc.frequency.linearRampToValueAtTime(700, ctx.currentTime + 0.25);
-        gain.gain.setValueAtTime(0.18, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
       } else {
-        // High-decibel Industrial Siren
         osc.type = 'sawtooth';
         osc.frequency.setValueAtTime(750, ctx.currentTime);
         osc.frequency.linearRampToValueAtTime(1150, ctx.currentTime + 0.2);
@@ -160,56 +96,24 @@ export default function LiveMonitoringPage() {
       gain.connect(ctx.destination);
       osc.start();
       osc.stop(ctx.currentTime + 0.45);
-
-      setIsBuzzerSounding(true);
-      setTimeout(() => setIsBuzzerSounding(false), 600);
     } catch (e) {
-      console.warn('Buzzer sound error:', e);
+      console.warn('Audio synthesis failed:', e);
     }
   }, [buzzerMuted, soundEnabled, selectedZone]);
 
-  // Enumerate Connected Camera Devices
-  useEffect(() => {
-    const getDevices = async () => {
-      try {
-        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const videoInputs = devices.filter((d) => d.kind === 'videoinput');
-          setAvailableVideoDevices(videoInputs);
-          if (videoInputs.length > 0 && !selectedDeviceId) {
-            setSelectedDeviceId(videoInputs[0].deviceId);
-          }
-        }
-      } catch (err) {
-        console.warn('Device enumeration error:', err);
-      }
-    };
-    getDevices();
-  }, [selectedDeviceId]);
-
-  // Fetch zones, notifications, and AI health
+  // Initial Page Load: Fetch Zones & Check AI
   useEffect(() => {
     const initPage = async () => {
       try {
-        const [zoneRes, notifRes] = await Promise.allSettled([
-          api.get('/zones'),
-          api.get('/notifications'),
-        ]);
-
-        if (zoneRes.status === 'fulfilled') {
-          const activeZones = zoneRes.value.data.filter((z) => z.active);
-          setZones(activeZones);
-          if (activeZones.length > 0) {
-            setSelectedZoneId(activeZones[0]._id);
-            setSelectedZone(activeZones[0]);
-          }
-        }
-
-        if (notifRes.status === 'fulfilled') {
-          setSupervisorNotifications(notifRes.value.data || []);
+        const zoneRes = await api.get('/zones');
+        const activeZones = (zoneRes.data || []).filter((z) => z.active);
+        setZones(activeZones);
+        if (activeZones.length > 0) {
+          setSelectedZoneId(activeZones[0]._id);
+          setSelectedZone(activeZones[0]);
         }
       } catch (err) {
-        console.error('Error initializing page:', err);
+        console.error('Error fetching zones:', err);
       }
 
       try {
@@ -223,85 +127,39 @@ export default function LiveMonitoringPage() {
       } catch (err) {
         setAiStatus('Offline');
       }
+
+      // Enumerate camera video hardware
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoDevs = devices.filter((d) => d.kind === 'videoinput');
+          setAvailableVideoDevices(videoDevs);
+          if (videoDevs.length > 0 && !selectedDeviceId) {
+            setSelectedDeviceId(videoDevs[0].deviceId);
+          }
+        }
+      } catch (e) {
+        console.warn('Could not enumerate cameras:', e);
+      }
     };
 
     initPage();
   }, []);
 
-  // Sync selected zone when selectedZoneId changes
+  // Sync selected zone
   useEffect(() => {
     const found = zones.find((z) => z._id === selectedZoneId);
     if (found) setSelectedZone(found);
   }, [selectedZoneId, zones]);
 
-  // Start Camera Stream
-  const startCamera = async (deviceIdToUse) => {
-    setCameraError('');
-    try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-
-      const constraints = {
-        video: deviceIdToUse
-          ? { deviceId: { exact: deviceIdToUse } }
-          : { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
-        audio: false,
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current.play();
-          setIsStreaming(true);
-        };
-      }
-    } catch (err) {
-      console.error('Webcam permission / access error:', err);
-      setCameraError(
-        err.name === 'NotAllowedError'
-          ? 'Camera permission denied. Please allow camera access in browser settings.'
-          : `Camera error: ${err.message || 'Device not found'}`
-      );
-    }
-  };
-
-  // Stop Camera Stream
-  const stopCamera = () => {
-    if (detectionTimerRef.current) {
-      clearInterval(detectionTimerRef.current);
-      detectionTimerRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setIsStreaming(false);
-    setIsDetecting(false);
-  };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopCamera();
-      if (sirenIntervalRef.current) clearInterval(sirenIntervalRef.current);
-    };
-  }, []);
-
-  // Dispatch Notification to Supervisor
+  // Dispatch Supervisor Notification
   const dispatchSupervisorAlert = useCallback(async (violationItems = []) => {
     if (!selectedZone) return;
     const sup = selectedZone.supervisor || {};
     const supName = sup.name || 'Shift Supervisor';
 
     try {
-      const res = await api.post(`/zones/${selectedZone._id}/notify-supervisor`, {
+      await api.post(`/zones/${selectedZone._id}/notify-supervisor`, {
         missingPPE: violationItems.length > 0 ? violationItems : ['Safety Helmet', 'High-Vis Vest'],
         zoneName: selectedZone.name,
         supervisorName: supName,
@@ -311,20 +169,15 @@ export default function LiveMonitoringPage() {
         message: `🚨 PPE VIOLATION ALERT: Worker in ${selectedZone.name} detected without ${violationItems.join(', ')}. Action required!`,
       });
 
-      if (res.data?.notification) {
-        setSupervisorNotifications((prev) => [res.data.notification, ...prev.slice(0, 19)]);
-      }
-
-      setDispatchStatus(`✅ Alert sent to Supervisor ${supName} (${sup.phone || sup.email})`);
+      setDispatchStatus(`✅ Alert sent to Supervisor ${supName}`);
       setTimeout(() => setDispatchStatus(''), 5000);
     } catch (err) {
-      console.error('Failed to notify supervisor:', err);
-      setDispatchStatus(`Dispatched alert to ${supName} via ${sup.alertChannel || 'SMS/WhatsApp'}`);
+      setDispatchStatus(`Alert sent to ${supName} via ${sup.alertChannel || 'SMS/WhatsApp'}`);
       setTimeout(() => setDispatchStatus(''), 5000);
     }
   }, [selectedZone]);
 
-  // Capture frame and run AI detection
+  // Capture Frame and Run AI Detection
   const captureAndDetect = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || !isStreaming) return;
 
@@ -366,14 +219,12 @@ export default function LiveMonitoringPage() {
         timestamp: new Date().toLocaleTimeString(),
       });
 
-      // If violation detected
+      // Sound buzzer & auto-notify supervisor on violation
       if (data.compliance_status === 'VIOLATION') {
-        // 1. Sound Zone Buzzer if enabled
         if (selectedZone?.buzzerEnabled !== false) {
           playIndustrialBuzzer();
         }
 
-        // 2. Auto-dispatch supervisor alert (with 12-second throttle cooldown)
         const now = Date.now();
         if (autoNotifySupervisor && now - lastAlertDispatchTimeRef.current > 12000) {
           lastAlertDispatchTimeRef.current = now;
@@ -385,38 +236,93 @@ export default function LiveMonitoringPage() {
     }
   }, [isStreaming, selectedZone, playIndustrialBuzzer, autoNotifySupervisor, dispatchSupervisorAlert]);
 
-  // Toggle periodic AI inference loop
-  const toggleDetection = () => {
-    if (isDetecting) {
-      if (detectionTimerRef.current) clearInterval(detectionTimerRef.current);
-      detectionTimerRef.current = null;
-      setIsDetecting(false);
-    } else {
-      setIsDetecting(true);
-      captureAndDetect();
-      detectionTimerRef.current = setInterval(captureAndDetect, frameInterval);
+  // Start Camera AND Auto-Start AI Detection (1-Click Easy Start)
+  const startScanner = async (deviceIdToUse) => {
+    setCameraError('');
+    try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      const constraints = {
+        video: deviceIdToUse
+          ? { deviceId: { exact: deviceIdToUse } }
+          : { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: false,
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current.play();
+          setIsStreaming(true);
+          setIsDetecting(true);
+        };
+      }
+    } catch (err) {
+      console.error('Webcam permission / access error:', err);
+      setCameraError(
+        err.name === 'NotAllowedError'
+          ? 'Camera access denied. Please click the camera icon in your browser URL bar and choose "Allow".'
+          : `Camera error: ${err.message || 'Device not found'}`
+      );
     }
   };
 
-  useEffect(() => {
-    if (isDetecting) {
-      if (detectionTimerRef.current) clearInterval(detectionTimerRef.current);
-      detectionTimerRef.current = setInterval(captureAndDetect, frameInterval);
+  // Stop Camera & Scanner
+  const stopScanner = () => {
+    if (detectionTimerRef.current) {
+      clearInterval(detectionTimerRef.current);
+      detectionTimerRef.current = null;
     }
-  }, [frameInterval, isDetecting, captureAndDetect]);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsStreaming(false);
+    setIsDetecting(false);
+  };
 
-  // Manually Save Detection Event to Database
+  // Detection Loop Interval Effect
+  useEffect(() => {
+    if (isDetecting && isStreaming) {
+      if (detectionTimerRef.current) clearInterval(detectionTimerRef.current);
+      captureAndDetect();
+      detectionTimerRef.current = setInterval(captureAndDetect, 800);
+    } else {
+      if (detectionTimerRef.current) {
+        clearInterval(detectionTimerRef.current);
+        detectionTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (detectionTimerRef.current) clearInterval(detectionTimerRef.current);
+    };
+  }, [isDetecting, isStreaming, captureAndDetect]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => stopScanner();
+  }, []);
+
+  // Save detection event to database
   const saveEventToDB = async () => {
     if (!detectionResult.timestamp) return;
     setSavingSnapshot(true);
     setSaveSuccess('');
 
     try {
-      const res = await api.post('/detections', {
+      await api.post('/detections', {
         zoneId: selectedZone?._id,
         zoneName: selectedZone?.name || 'Live Camera',
-        cameraId: activeChannelId,
-        cameraName: INDUSTRIAL_CHANNELS.find((c) => c.id === activeChannelId)?.name || 'Surveillance Feed',
+        cameraId: 'webcam_main',
+        cameraName: 'Primary Live Camera',
         sourceType: 'webcam',
         detectedClasses: detectionResult.detectedClasses,
         missingPPE: detectionResult.missingPPE,
@@ -429,438 +335,223 @@ export default function LiveMonitoringPage() {
         },
       });
 
-      if (res.data?.supervisorAlert) {
-        setSupervisorNotifications((prev) => [res.data.supervisorAlert, ...prev.slice(0, 19)]);
-      }
-
-      setSaveSuccess('Detection event recorded into safety ledger & supervisor alerted!');
+      setSaveSuccess('Incident logged & supervisor alerted!');
       setTimeout(() => setSaveSuccess(''), 4000);
     } catch (err) {
-      console.error('Failed to save detection event:', err);
       alert('Failed to save event: ' + (err.response?.data?.message || err.message));
     } finally {
       setSavingSnapshot(false);
     }
   };
 
-  // Switch Multi-Camera Channel
-  const handleSelectChannel = (channelId) => {
-    setActiveChannelId(channelId);
-    const targetChannel = INDUSTRIAL_CHANNELS.find((c) => c.id === channelId);
-    if (targetChannel) {
-      // Find matching zone if any
-      const matchingZone = zones.find((z) => z.code === targetChannel.zoneCode);
-      if (matchingZone) {
-        setSelectedZoneId(matchingZone._id);
-        setSelectedZone(matchingZone);
-      }
-    }
-  };
-
-  const activeChannel = INDUSTRIAL_CHANNELS.find((c) => c.id === activeChannelId) || INDUSTRIAL_CHANNELS[0];
   const activeSupervisor = selectedZone?.supervisor || {
     name: 'Shift Supervisor',
     phone: '+91 98234 56789',
     email: 'supervisor@ppe.com',
     alertChannel: 'WhatsApp & SMS',
-    shift: 'General Shift'
   };
 
+  const primaryPerson = detectionResult.persons?.[0];
+  const scannedParts = primaryPerson?.scanned_body_parts || [];
+  const ignoredPPE = primaryPerson?.ignored_unscanned_ppe || [];
+
   return (
-    <div className="space-y-6">
-      {/* Top Header Banner with Live Factory Surveillance Backdrop */}
-      <div className="p-4 sm:p-5 rounded-2xl border border-slate-800 shadow-xl relative overflow-hidden bg-slate-900 admin-hero-banner">
-        <div 
-          className="absolute inset-0 bg-cover bg-right lg:bg-center bg-no-repeat opacity-15 pointer-events-none"
-          style={{ backgroundImage: "url('/images/factory_safety_bg.jpg')" }}
-        />
-        <div className="absolute inset-0 bg-gradient-to-r from-slate-900 via-slate-900/90 to-transparent admin-hero-gradient pointer-events-none" />
-        <div className="absolute top-0 left-0 right-0 h-1 hazard-stripes opacity-40 z-10"></div>
-        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <h1 className="text-xl lg:text-2xl font-bold text-white tracking-tight">
-              Multi-Camera Live Surveillance & Alarm Console
-            </h1>
-            <span className="px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-400 text-[10px] font-bold flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 pulse-live"></span>
-              SURVEILLANCE ACTIVE
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Real-time multi-feed computer vision, zone supervisor automated alerts, and floor emergency buzzer system
-          </p>
-        </div>
+    <div className="space-y-5 max-w-6xl mx-auto">
+      {/* Hidden processing canvas */}
+      <canvas ref={canvasRef} className="hidden" />
 
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* AI Status */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs">
-            <span className="text-slate-400">AI Model:</span>
-            <span className={`font-semibold ${aiStatus.includes('Online') ? 'text-emerald-400' : 'text-amber-400'}`}>
-              {aiStatus}
-            </span>
-          </div>
-
-          {/* Buzzer Sound Toggle */}
-          <button
-            onClick={() => setBuzzerMuted(!buzzerMuted)}
-            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition ${
-              buzzerMuted
-                ? 'bg-rose-950/40 border-rose-800 text-rose-400'
-                : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-slate-600'
-            }`}
-            title={buzzerMuted ? 'Floor Buzzer is Silenced' : 'Floor Buzzer is Armed'}
-          >
-            {buzzerMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5 text-rose-400" />}
-            <span>{buzzerMuted ? 'Buzzer Silenced' : 'Buzzer Armed'}</span>
-          </button>
-
-          {/* Manual Buzzer Test Button */}
-          <button
-            onClick={playIndustrialBuzzer}
-            className="px-3 py-1.5 rounded-lg bg-rose-900/60 hover:bg-rose-800 border border-rose-700 text-rose-200 text-xs font-bold flex items-center gap-1.5 shadow-md shadow-rose-900/20 transition"
-            title="Audition floor buzzer sound"
-          >
-            <Zap className="w-3.5 h-3.5 text-rose-400" />
-            <span>Test Buzzer</span>
-          </button>
-        </div>
-      </div>
-    </div>
-
-      {/* Camera Error Alert */}
-      {cameraError && (
-        <div className="p-4 rounded-xl bg-red-950/40 border border-red-800/80 text-red-200 text-xs flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0" />
-            <span>{cameraError}</span>
-          </div>
-          <button
-            onClick={() => startCamera(selectedDeviceId)}
-            className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white rounded text-xs font-semibold"
-          >
-            Retry Camera Access
-          </button>
-        </div>
-      )}
-
-      {/* Dispatched Notification Alert Banner */}
-      {dispatchStatus && (
-        <div className="p-3.5 rounded-xl bg-emerald-950/60 border border-emerald-800 text-emerald-200 text-xs flex items-center justify-between shadow-xl animate-in slide-in-from-top-2">
-          <div className="flex items-center gap-2.5">
-            <Bell className="w-4 h-4 text-emerald-400 flex-shrink-0 animate-bounce" />
-            <span className="font-medium">{dispatchStatus}</span>
-          </div>
-          <span className="text-[10px] text-emerald-400 font-mono">Dispatched Instantly</span>
-        </div>
-      )}
-
-      {/* Save Success Banner */}
-      {saveSuccess && (
-        <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800 text-emerald-300 text-xs flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          <span>{saveSuccess}</span>
-        </div>
-      )}
-
-      {/* Critical Violation Strobe Banner */}
-      {isStreaming && detectionResult.complianceStatus === 'VIOLATION' && (
-        <div className="p-3.5 rounded-xl bg-rose-950/80 border-2 border-rose-600 text-rose-100 flex items-center justify-between shadow-2xl animate-pulse">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-rose-600 text-white flex items-center justify-center font-bold text-sm shadow-lg shadow-rose-600/50">
-              🚨
-            </div>
-            <div>
-              <div className="text-xs font-bold uppercase tracking-wide text-rose-300">
-                CRITICAL PPE COMPLIANCE BREACH IN {selectedZone?.name?.toUpperCase() || 'ZONE'}
+      {/* Top Header & Easy Zone Selection */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center font-bold">
+                <Video className="w-4 h-4" />
               </div>
-              <div className="text-[11px] text-rose-200 font-medium mt-0.5">
-                Missing: {detectionResult.missingPPE?.join(', ') || 'Mandatory Safety Gear'} • 
-                Supervisor {activeSupervisor.name} Alerted • Floor Siren Active
-              </div>
+              <h1 className="text-xl font-bold text-white tracking-tight">
+                Live PPE Camera Scanner
+              </h1>
+              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 ${
+                aiStatus.includes('Online')
+                  ? 'bg-emerald-950/80 border-emerald-800 text-emerald-400'
+                  : 'bg-amber-950/80 border-amber-800 text-amber-400'
+              }`}>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                AI Active
+              </span>
             </div>
+            <p className="text-xs text-slate-400 mt-1">
+              Select your work zone, start the camera, and stand in front to verify safety compliance.
+            </p>
           </div>
+
+          {/* Quick Hardware & Sound Controls */}
           <div className="flex items-center gap-2">
+            {availableVideoDevices.length > 1 && (
+              <select
+                value={selectedDeviceId}
+                onChange={(e) => {
+                  setSelectedDeviceId(e.target.value);
+                  if (isStreaming) startScanner(e.target.value);
+                }}
+                className="bg-slate-950 border border-slate-700 text-xs text-slate-300 rounded-lg px-2.5 py-2 focus:outline-none"
+              >
+                {availableVideoDevices.map((d, i) => (
+                  <option key={d.deviceId} value={d.deviceId}>
+                    {d.label || `Camera ${i + 1}`}
+                  </option>
+                ))}
+              </select>
+            )}
+
             <button
-              onClick={() => dispatchSupervisorAlert(detectionResult.missingPPE)}
-              className="px-3 py-1.5 rounded-lg bg-rose-800 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 shadow"
+              onClick={() => setBuzzerMuted(!buzzerMuted)}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition ${
+                buzzerMuted
+                  ? 'bg-rose-950/40 border-rose-800 text-rose-400'
+                  : 'bg-slate-800 border-slate-700 text-slate-200 hover:border-slate-600'
+              }`}
+              title="Toggle alarm sound"
             >
-              <Send className="w-3 h-3" /> Resend Alert
+              {buzzerMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
+              <span>{buzzerMuted ? 'Muted' : 'Sound On'}</span>
             </button>
           </div>
         </div>
-      )}
 
-      {/* Multi-Camera Channel Switcher & Layout Toolbar */}
-      <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-4">
-        {/* Channel Selection Buttons */}
-        <div className="flex items-center gap-2 overflow-x-auto py-1">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5 mr-1 flex-shrink-0">
-            <Radio className="w-3.5 h-3.5 text-sky-400" />
-            Camera Feeds:
+        {/* Clean Zone Selector Pills */}
+        <div className="mt-4 pt-4 border-t border-slate-800/80 flex items-center gap-2 overflow-x-auto pb-1">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex-shrink-0 flex items-center gap-1">
+            <Layers className="w-3.5 h-3.5 text-sky-400" />
+            Zone:
           </span>
-          {INDUSTRIAL_CHANNELS.map((ch) => {
-            const isSelected = activeChannelId === ch.id;
+          {zones.map((zone) => {
+            const isSelected = selectedZoneId === zone._id;
             return (
               <button
-                key={ch.id}
-                onClick={() => handleSelectChannel(ch.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition flex-shrink-0 ${
+                key={zone._id}
+                onClick={() => setSelectedZoneId(zone._id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition flex-shrink-0 border ${
                   isSelected
-                    ? 'bg-sky-600 text-white shadow-lg shadow-sky-600/30'
-                    : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                    ? 'bg-sky-600 border-sky-500 text-white shadow-md shadow-sky-600/30'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
                 }`}
               >
-                <span className={`w-2 h-2 rounded-full ${isSelected ? 'bg-white pulse-live' : 'bg-slate-600'}`}></span>
-                <span>{ch.name}</span>
-                <span className={`text-[10px] px-1 rounded ${isSelected ? 'bg-sky-700 text-sky-100' : 'bg-slate-800 text-slate-500'}`}>
-                  {ch.zoneCode}
+                <span>{zone.name}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                  isSelected ? 'bg-sky-700 text-white' : 'bg-slate-800 text-slate-400'
+                }`}>
+                  {zone.code || 'ZONE'}
                 </span>
               </button>
             );
           })}
         </div>
-
-        {/* Layout Modes (Single / Split / Quad) */}
-        <div className="flex items-center gap-2">
-          {availableVideoDevices.length > 1 && (
-            <select
-              value={selectedDeviceId}
-              onChange={(e) => {
-                setSelectedDeviceId(e.target.value);
-                if (isStreaming) startCamera(e.target.value);
-              }}
-              className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:ring-2 focus:ring-sky-500"
-              title="Select physical camera hardware"
-            >
-              {availableVideoDevices.map((dev, idx) => (
-                <option key={dev.deviceId} value={dev.deviceId}>
-                  {dev.label || `Camera Device ${idx + 1}`}
-                </option>
-              ))}
-            </select>
-          )}
-
-          <div className="flex items-center bg-slate-950 border border-slate-800 rounded-xl p-1 gap-1">
-            <button
-              onClick={() => setLayoutMode('single')}
-              className={`p-1.5 rounded-lg text-xs transition ${
-                layoutMode === 'single' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Single Focused Feed View"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setLayoutMode('split')}
-              className={`p-1.5 rounded-lg text-xs transition ${
-                layoutMode === 'split' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Dual Split Camera View"
-            >
-              <Columns className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setLayoutMode('quad')}
-              className={`p-1.5 rounded-lg text-xs transition ${
-                layoutMode === 'quad' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-              title="Quad 4-Camera Grid View"
-            >
-              <LayoutGrid className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
       </div>
 
-      {/* Main Surveillance Area */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Video Feeds (2 Cols) */}
-        <div className="lg:col-span-2 space-y-4">
-          {/* QUAD GRID VIEW */}
-          {layoutMode === 'quad' ? (
-            <div className="grid grid-cols-2 gap-3 aspect-video rounded-2xl bg-slate-950 border-2 border-slate-800 p-3 shadow-2xl">
-              {INDUSTRIAL_CHANNELS.map((ch, idx) => {
-                const isCurrentActive = activeChannelId === ch.id;
-                return (
-                  <div
-                    key={ch.id}
-                    onClick={() => handleSelectChannel(ch.id)}
-                    className={`relative rounded-xl bg-slate-900 border overflow-hidden cursor-pointer flex flex-col justify-between p-3 transition ${
-                      isCurrentActive
-                        ? 'border-sky-500 ring-2 ring-sky-500/30'
-                        : 'border-slate-800 hover:border-slate-700'
-                    }`}
-                  >
-                    {/* Live Stream or Channel simulation */}
-                    {isCurrentActive && isStreaming ? (
-                      <div className="absolute inset-0 z-0">
-                        <video
-                          ref={videoRef}
-                          autoPlay
-                          playsInline
-                          muted
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    ) : (
-                      <div className="absolute inset-0 bg-slate-950/80 flex items-center justify-center text-slate-600">
-                        <Camera className="w-8 h-8 opacity-40" />
-                      </div>
-                    )}
+      {/* Alerts / Error Notices */}
+      {cameraError && (
+        <div className="p-4 rounded-xl bg-rose-950/40 border border-rose-800 text-rose-200 text-xs flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-rose-400 flex-shrink-0" />
+            <span>{cameraError}</span>
+          </div>
+          <button
+            onClick={() => startScanner(selectedDeviceId)}
+            className="px-3 py-1 bg-rose-800 hover:bg-rose-700 text-white rounded text-xs font-semibold"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
-                    {/* Channel HUD Overlay */}
-                    <div className="relative z-10 flex items-center justify-between">
-                      <span className="px-2 py-0.5 rounded-md bg-slate-950/90 text-white font-mono text-[10px] font-bold border border-slate-800 flex items-center gap-1.5 backdrop-blur-md">
-                        <span className={`w-1.5 h-1.5 rounded-full ${isCurrentActive && isStreaming ? 'bg-red-500 pulse-live' : 'bg-emerald-400'}`}></span>
-                        {ch.name}
-                      </span>
-                      <span className="text-[10px] text-slate-400 bg-slate-950/80 px-1.5 py-0.5 rounded border border-slate-800">
-                        {ch.fps}
-                      </span>
-                    </div>
+      {dispatchStatus && (
+        <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-800 text-emerald-200 text-xs flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>{dispatchStatus}</span>
+        </div>
+      )}
 
-                    <div className="relative z-10 flex items-center justify-between bg-slate-950/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-800/80 text-[10px]">
-                      <span className="text-slate-300 font-semibold">{ch.location}</span>
-                      <span className="text-sky-400 font-bold">{ch.zoneCode}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : layoutMode === 'split' ? (
-            /* DUAL SPLIT VIEW */
-            <div className="grid grid-cols-2 gap-3 aspect-video rounded-2xl bg-slate-950 border-2 border-slate-800 p-3 shadow-2xl">
-              {/* Left Feed: Active Primary */}
-              <div className="relative rounded-xl bg-slate-900 border border-sky-500 overflow-hidden flex items-center justify-center">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className={`w-full h-full object-contain ${detectionResult.annotatedImage ? 'hidden' : 'block'}`}
-                />
-                {detectionResult.annotatedImage && (
-                  <img
-                    src={detectionResult.annotatedImage}
-                    alt="AI Annotated Frame"
-                    className="w-full h-full object-contain"
-                  />
-                )}
-                {!isStreaming && (
-                  <div className="text-center p-4 text-slate-500">
-                    <CameraOff className="w-8 h-8 mx-auto mb-2 text-slate-600" />
-                    <span className="text-xs">Primary Channel Inactive</span>
-                  </div>
-                )}
-                <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-950/90 border border-slate-700 text-white text-[10px] font-bold backdrop-blur-md flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 pulse-live"></span>
-                  FEED A: {activeChannel.name}
-                </div>
-              </div>
+      {saveSuccess && (
+        <div className="p-3 rounded-xl bg-sky-950/60 border border-sky-800 text-sky-200 text-xs flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-sky-400" />
+          <span>{saveSuccess}</span>
+        </div>
+      )}
 
-              {/* Right Feed: Secondary Zone Feed */}
-              <div className="relative rounded-xl bg-slate-900 border border-slate-800 overflow-hidden flex items-center justify-center p-4">
-                <div className="text-center text-slate-500">
-                  <Radio className="w-8 h-8 mx-auto mb-2 text-sky-400/60 animate-pulse" />
-                  <h4 className="text-xs font-bold text-slate-300 mb-1">
-                    FEED B: {INDUSTRIAL_CHANNELS[1].name}
-                  </h4>
-                  <p className="text-[11px] text-slate-400">Chemical Line Secondary PTZ Feed Standby</p>
-                </div>
-                <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-slate-950/90 border border-slate-700 text-slate-300 text-[10px] font-bold backdrop-blur-md">
-                  FEED B: STANDBY
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* SINGLE PRIMARY FEED VIEW */
-            <div className="relative aspect-video rounded-2xl bg-slate-950 border-2 border-slate-800 overflow-hidden shadow-2xl flex items-center justify-center">
-              {/* Native Video Feed */}
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className={`w-full h-full object-contain ${detectionResult.annotatedImage ? 'hidden' : 'block'}`}
+      {/* Main Scanner Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Left Column: Live Camera Video View (2 Cols) */}
+        <div className="lg:col-span-2 space-y-3">
+          <div className="relative aspect-video rounded-2xl bg-slate-950 border-2 border-slate-800 overflow-hidden shadow-2xl flex items-center justify-center">
+            {/* Live Video Element */}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className={`w-full h-full object-cover ${isStreaming && !detectionResult.annotatedImage ? 'block' : 'hidden'}`}
+            />
+
+            {/* AI HUD Annotated Overlay Frame */}
+            {isStreaming && detectionResult.annotatedImage && (
+              <img
+                src={detectionResult.annotatedImage}
+                alt="AI Annotated Frame"
+                className="w-full h-full object-cover"
               />
+            )}
 
-              {/* AI Annotated Feed Overlay */}
-              {detectionResult.annotatedImage && (
-                <img
-                  src={detectionResult.annotatedImage}
-                  alt="AI Annotated Frame"
-                  className="w-full h-full object-contain"
-                />
-              )}
-
-              {/* Hidden capture canvas */}
-              <canvas ref={canvasRef} className="hidden" />
-
-              {/* Offline / Inactive Placeholder */}
-              {!isStreaming && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-950/90 text-slate-400">
-                  <div className="w-16 h-16 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center mb-4 text-slate-500">
-                    <CameraOff className="w-8 h-8" />
-                  </div>
-                  <h3 className="text-base font-bold text-white mb-1">
-                    {activeChannel.name} Stream Offline
-                  </h3>
-                  <p className="text-xs max-w-sm text-slate-400 mb-6">
-                    Click 'Start Camera Feed' to initialize local media stream or connected USB capture device for automated PPE monitoring.
+            {/* Camera OFF Placeholder State */}
+            {!isStreaming && (
+              <div className="text-center p-6 space-y-4 max-w-md">
+                <div className="w-16 h-16 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-400 mx-auto flex items-center justify-center shadow-lg">
+                  <Camera className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Camera is Turned Off</h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Click below to start live scanning. The system will detect your safety gear in real time.
                   </p>
-                  <button
-                    onClick={() => startCamera(selectedDeviceId)}
-                    className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs shadow-lg shadow-sky-600/30 flex items-center gap-2 transition"
-                  >
-                    <Camera className="w-4 h-4" /> Start Camera Feed
-                  </button>
                 </div>
-              )}
+                <button
+                  onClick={() => startScanner(selectedDeviceId)}
+                  className="px-6 py-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold flex items-center justify-center gap-2 mx-auto shadow-lg shadow-sky-600/30 transition transform hover:scale-105"
+                >
+                  <Camera className="w-4 h-4" />
+                  <span>Start Camera Scanner</span>
+                </button>
+              </div>
+            )}
 
-              {/* Live Status Overlay Badges */}
-              {isStreaming && (
-                <div className="absolute top-4 left-4 flex flex-wrap items-center gap-2">
-                  <span className="px-2.5 py-1 rounded-full bg-slate-900/90 border border-slate-700 text-white text-[11px] font-bold flex items-center gap-1.5 backdrop-blur-md">
-                    <span className="w-2 h-2 rounded-full bg-red-500 pulse-live"></span>
-                    LIVE • {activeChannel.name.toUpperCase()}
+            {/* Live Camera Active Badges */}
+            {isStreaming && (
+              <>
+                <div className="absolute top-3 left-3 flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-md bg-rose-950/90 border border-rose-800 text-rose-300 text-[10px] font-bold flex items-center gap-1.5 backdrop-blur-md">
+                    <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
+                    LIVE SCANNING
                   </span>
-
-                  {isDetecting && (
-                    <span className="px-2.5 py-1 rounded-full bg-sky-950/90 border border-sky-800 text-sky-300 text-[11px] font-semibold flex items-center gap-1.5 backdrop-blur-md">
-                      <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
-                      AI INFERENCE ({detectionResult.latencyMs}ms)
-                    </span>
-                  )}
-
-                  {/* Buzzer Armed Badge */}
-                  <span className={`px-2.5 py-1 rounded-full border text-[11px] font-bold flex items-center gap-1.5 backdrop-blur-md ${
-                    selectedZone?.buzzerEnabled !== false && !buzzerMuted
-                      ? 'bg-rose-950/90 border-rose-800 text-rose-300'
-                      : 'bg-slate-900/90 border-slate-800 text-slate-400'
-                  }`}>
-                    <Volume2 className="w-3 h-3 text-rose-400" />
-                    <span>{buzzerMuted ? 'BUZZER MUTED' : `SIREN ARMED (${selectedZone?.buzzerSound?.toUpperCase() || 'SIREN'})`}</span>
+                  <span className="px-2.5 py-1 rounded-md bg-slate-900/90 border border-slate-700 text-slate-200 text-[10px] font-bold backdrop-blur-md">
+                    {selectedZone?.name || 'Safety Zone'}
                   </span>
                 </div>
-              )}
 
-              {/* Compliance Verdict Banner */}
-              {isStreaming && detectionResult.timestamp && (
-                <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between p-3.5 rounded-xl bg-slate-900/90 backdrop-blur-md border border-slate-700 shadow-xl">
+                {/* Floating Bottom Verdict Card */}
+                <div className="absolute bottom-3 left-3 right-3 p-3 rounded-xl bg-slate-900/95 backdrop-blur-md border border-slate-700 shadow-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
                   <div className="flex items-center gap-3">
                     {detectionResult.complianceStatus === 'COMPLIANT' && (
-                      <div className="w-9 h-9 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                      <div className="w-9 h-9 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0">
                         <ShieldCheck className="w-5 h-5" />
                       </div>
                     )}
                     {detectionResult.complianceStatus === 'VIOLATION' && (
-                      <div className="w-9 h-9 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center">
+                      <div className="w-9 h-9 rounded-lg bg-rose-500/20 text-rose-400 flex items-center justify-center flex-shrink-0">
                         <ShieldAlert className="w-5 h-5" />
                       </div>
                     )}
-                    {detectionResult.complianceStatus === 'UNCERTAIN' && (
-                      <div className="w-9 h-9 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                    {(detectionResult.complianceStatus === 'UNCERTAIN' || detectionResult.complianceStatus === 'AWAITING_INPUT') && (
+                      <div className="w-9 h-9 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0">
                         <HelpCircle className="w-5 h-5" />
                       </div>
                     )}
@@ -871,258 +562,204 @@ export default function LiveMonitoringPage() {
                           detectionResult.complianceStatus === 'COMPLIANT' ? 'text-emerald-400' :
                           detectionResult.complianceStatus === 'VIOLATION' ? 'text-rose-400' : 'text-amber-400'
                         }`}>
-                          {detectionResult.complianceStatus}
+                          {detectionResult.complianceStatus === 'COMPLIANT' ? 'ALL REQUIRED PPE COMPLIANT' :
+                           detectionResult.complianceStatus === 'VIOLATION' ? 'SAFETY VIOLATION DETECTED' :
+                           'SCANNING PERSON...'}
                         </span>
-                        <span className="text-[10px] text-slate-400">@ {detectionResult.timestamp}</span>
+                        {detectionResult.latencyMs > 0 && (
+                          <span className="text-[10px] text-slate-400">({detectionResult.latencyMs}ms)</span>
+                        )}
                       </div>
-                      {detectionResult.missingPPE?.length > 0 && (
-                        <div className="text-[11px] text-rose-300 font-semibold">
-                          Missing Gear: {detectionResult.missingPPE.join(', ')}
+
+                      {detectionResult.missingPPE?.length > 0 ? (
+                        <div className="text-xs font-bold text-rose-300">
+                          Missing Gear: {detectionResult.missingPPE.map((m) => m.toUpperCase()).join(', ')}
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-emerald-400 flex items-center gap-1.5">
+                          <span>Verified on visible body parts</span>
+                          {scannedParts.length > 0 && (
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              ({scannedParts.join(' + ')})
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {ignoredPPE.length > 0 && (
+                        <div className="text-[10px] text-slate-400">
+                          ℹ️ {ignoredPPE.join(', ')} outside camera view (skipped)
                         </div>
                       )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={saveEventToDB}
-                      disabled={savingSnapshot}
-                      className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-600 flex items-center gap-1.5 transition disabled:opacity-50"
-                      title="Save this detection event and notify supervisor"
-                    >
-                      <Save className="w-3.5 h-3.5 text-sky-400" />
-                      {savingSnapshot ? 'Saving...' : 'Log & Alert'}
-                    </button>
-                  </div>
+                  {/* 1-Click Save / Log Action */}
+                  <button
+                    onClick={saveEventToDB}
+                    disabled={savingSnapshot}
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-600 flex items-center justify-center gap-1.5 transition disabled:opacity-50 flex-shrink-0"
+                    title="Log this detection event into violations log"
+                  >
+                    <Save className="w-3.5 h-3.5 text-sky-400" />
+                    <span>{savingSnapshot ? 'Saving...' : 'Log Event'}</span>
+                  </button>
                 </div>
-              )}
-            </div>
-          )}
+              </>
+            )}
+          </div>
 
-          {/* Camera Controls Bar */}
-          <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              {!isStreaming ? (
+          {/* Simple Camera Controls Bar */}
+          <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-3">
+            {!isStreaming ? (
+              <button
+                onClick={() => startScanner(selectedDeviceId)}
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition"
+              >
+                <Camera className="w-4 h-4" />
+                <span>Start Camera Scanner</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => startCamera(selectedDeviceId)}
-                  className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs flex items-center gap-2 transition shadow-md shadow-sky-600/30"
+                  onClick={stopScanner}
+                  className="px-4 py-2 rounded-xl bg-rose-900/80 hover:bg-rose-800 text-rose-200 border border-rose-700 font-bold text-xs flex items-center gap-2 transition"
                 >
-                  <Camera className="w-4 h-4" /> Start Camera Feed
+                  <Square className="w-4 h-4 text-rose-400" />
+                  <span>Stop Scanner</span>
                 </button>
-              ) : (
-                <button
-                  onClick={stopCamera}
-                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-red-400 font-semibold text-xs flex items-center gap-2 border border-slate-700 transition"
-                >
-                  <Square className="w-4 h-4" /> Stop Camera
-                </button>
-              )}
 
-              {isStreaming && (
                 <button
-                  onClick={toggleDetection}
-                  className={`px-4 py-2 rounded-lg font-semibold text-xs flex items-center gap-2 transition ${
+                  onClick={() => setIsDetecting(!isDetecting)}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold border transition ${
                     isDetecting
-                      ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-md shadow-amber-600/30'
-                      : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-600/30'
+                      ? 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
+                      : 'bg-amber-600 text-white border-amber-500'
                   }`}
                 >
-                  {isDetecting ? (
-                    <>
-                      <Square className="w-4 h-4" /> Pause Detection Loop
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4" /> Start AI Detection Loop
-                    </>
-                  )}
+                  {isDetecting ? 'Pause AI' : 'Resume AI'}
                 </button>
-              )}
-            </div>
+              </div>
+            )}
 
-            {/* Inference Processing Rate Slider */}
-            <div className="flex items-center gap-3 text-xs text-slate-300">
-              <span className="text-slate-400">Sampling Rate:</span>
-              <input
-                type="range"
-                min="400"
-                max="2000"
-                step="200"
-                value={frameInterval}
-                onChange={(e) => setFrameInterval(Number(e.target.value))}
-                className="w-28 accent-sky-500"
-              />
-              <span className="font-mono text-sky-400 w-12 text-right">{frameInterval}ms</span>
+            <div className="flex items-center gap-2 text-xs">
+              <button
+                onClick={playIndustrialBuzzer}
+                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 flex items-center gap-1.5 transition"
+                title="Test floor buzzer sound"
+              >
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>Test Alarm</span>
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Zone Supervisor, Buzzer Controls & Live PPE Analytics */}
+        {/* Right Column: Zone Requirements & Shift Supervisor (1 Col) */}
         <div className="space-y-4">
-          {/* Active Safety Zone Selection */}
-          <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2 text-white font-bold text-xs uppercase tracking-wider">
-                <Layers className="w-4 h-4 text-sky-400" />
-                Active Safety Zone
-              </div>
-              <span className="text-[10px] text-sky-400 font-mono font-bold">{selectedZone?.code || 'ZN'}</span>
+          {/* Required PPE Card */}
+          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+              <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                <HardHat className="w-4 h-4 text-sky-400" />
+                Required PPE For This Zone
+              </span>
+              <span className="text-[10px] font-bold text-sky-400">{selectedZone?.code}</span>
+            </div>
+
+            <div className="space-y-2">
+              {(selectedZone?.requiredPPE || ['helmet', 'vest']).map((ppe, idx) => {
+                const isWorn = primaryPerson?.worn_ppe?.includes(ppe.toLowerCase());
+                const isIgnored = ignoredPPE.includes(ppe.toLowerCase());
+                const isMissing = detectionResult.missingPPE?.includes(ppe.toLowerCase());
+
+                return (
+                  <div
+                    key={idx}
+                    className={`p-2.5 rounded-xl border flex items-center justify-between text-xs transition ${
+                      !isStreaming
+                        ? 'bg-slate-950/60 border-slate-800 text-slate-300'
+                        : isMissing
+                        ? 'bg-rose-950/40 border-rose-800/80 text-rose-300'
+                        : isWorn
+                        ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-300'
+                        : isIgnored
+                        ? 'bg-slate-950/40 border-slate-800 text-slate-400'
+                        : 'bg-slate-950/60 border-slate-800 text-slate-300'
+                    }`}
+                  >
+                    <span className="font-bold capitalize">{ppe}</span>
+                    <span className="text-[10px] font-bold">
+                      {!isStreaming ? (
+                        'Required'
+                      ) : isMissing ? (
+                        <span className="text-rose-400 font-bold">❌ MISSING</span>
+                      ) : isWorn ? (
+                        <span className="text-emerald-400 font-bold">✅ DETECTED</span>
+                      ) : isIgnored ? (
+                        <span className="text-slate-400">OUT OF VIEW</span>
+                      ) : (
+                        'Scanning'
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Supervisor Card */}
+          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                <UserCheck className="w-4 h-4 text-amber-400" />
+                Shift Supervisor
+              </span>
+              <span className="text-[10px] text-emerald-400 font-bold">ON DUTY</span>
             </div>
 
             <div>
-              <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                Surveillance Zone
-              </label>
-              <select
-                value={selectedZoneId}
-                onChange={(e) => setSelectedZoneId(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-              >
-                {zones.map((z) => (
-                  <option key={z._id} value={z._id}>
-                    {z.name} ({z.code || 'ZONE'})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {selectedZone && (
-              <div>
-                <span className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                  Mandatory PPE For This Zone
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {selectedZone.requiredPPE?.map((item, idx) => (
-                    <span
-                      key={idx}
-                      className="px-2.5 py-1 rounded-md bg-slate-800 text-sky-300 text-[11px] font-medium border border-slate-700 uppercase"
-                    >
-                      {item}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* REGISTERED ZONE SUPERVISOR CARD */}
-          <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-              <div className="flex items-center gap-2 text-white font-bold text-xs uppercase tracking-wider">
-                <UserCheck className="w-4 h-4 text-amber-400" />
-                Registered Zone Supervisor
-              </div>
-              <span className="px-2 py-0.5 rounded bg-amber-950/80 border border-amber-800/80 text-amber-300 text-[9px] font-bold">
-                {activeSupervisor.shift || 'Shift On Duty'}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between pt-1">
-              <div>
-                <h4 className="text-sm font-bold text-slate-100">{activeSupervisor.name}</h4>
-                <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
-                  <a href={`tel:${activeSupervisor.phone}`} className="flex items-center gap-1 hover:text-sky-400">
-                    <Phone className="w-3 h-3 text-emerald-400" />
-                    <span>{activeSupervisor.phone}</span>
-                  </a>
-                  <a href={`mailto:${activeSupervisor.email}`} className="flex items-center gap-1 hover:text-sky-400 truncate max-w-[130px]">
-                    <Mail className="w-3 h-3 text-sky-400" />
-                    <span className="truncate">{activeSupervisor.email}</span>
-                  </a>
-                </div>
+              <div className="font-bold text-sm text-slate-100">{activeSupervisor.name}</div>
+              <div className="text-xs text-slate-400 mt-1 flex flex-col gap-1">
+                <a href={`tel:${activeSupervisor.phone}`} className="flex items-center gap-1.5 hover:text-sky-400">
+                  <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>{activeSupervisor.phone}</span>
+                </a>
+                <a href={`mailto:${activeSupervisor.email}`} className="flex items-center gap-1.5 hover:text-sky-400 truncate">
+                  <Mail className="w-3.5 h-3.5 text-sky-400" />
+                  <span className="truncate">{activeSupervisor.email}</span>
+                </a>
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
-              <span className="text-[11px] text-slate-400">
-                Channel: <strong className="text-slate-300">{activeSupervisor.alertChannel || 'WhatsApp & SMS'}</strong>
-              </span>
+            <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
               <button
                 onClick={() => dispatchSupervisorAlert(detectionResult.missingPPE)}
-                className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-sky-600/20 transition"
-                title="Send immediate WhatsApp/SMS/Email notification to this supervisor"
+                className="w-full py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-sky-600/20 transition"
               >
-                <Send className="w-3 h-3" />
-                <span>Notify Supervisor</span>
-              </button>
-            </div>
-
-            {/* Auto-Notify Toggle */}
-            <div className="flex items-center justify-between pt-2 border-t border-slate-800/60">
-              <label htmlFor="autoNotify" className="text-xs text-slate-300 cursor-pointer flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="autoNotify"
-                  checked={autoNotifySupervisor}
-                  onChange={(e) => setAutoNotifySupervisor(e.target.checked)}
-                  className="rounded border-slate-700 accent-sky-500 w-4 h-4 cursor-pointer"
-                />
-                <span>Auto-notify on violation detection</span>
-              </label>
-              <span className="text-[10px] text-emerald-400 font-semibold">Instant Dispatch</span>
-            </div>
-          </div>
-
-          {/* ZONE BUZZER CONTROLS CARD */}
-          <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-              <div className="flex items-center gap-2 text-white font-bold text-xs uppercase tracking-wider">
-                <Volume2 className="w-4 h-4 text-rose-400" />
-                Zone Floor Buzzer & Siren
-              </div>
-              <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
-                selectedZone?.buzzerEnabled !== false
-                  ? 'bg-rose-950 border border-rose-800 text-rose-300'
-                  : 'bg-slate-800 text-slate-400'
-              }`}>
-                {selectedZone?.buzzerEnabled !== false ? `Active (${selectedZone?.buzzerSound || 'Siren'})` : 'Buzzer Off'}
-              </span>
-            </div>
-
-            <p className="text-xs text-slate-400">
-              Audible high-decibel warning sounded across the bay floor when workers enter without mandated PPE.
-            </p>
-
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <button
-                onClick={playIndustrialBuzzer}
-                className="py-2 px-3 rounded-lg bg-rose-950 hover:bg-rose-900 text-rose-200 border border-rose-800 text-xs font-bold flex items-center justify-center gap-2 transition"
-              >
-                <Volume2 className="w-3.5 h-3.5 text-rose-400" />
-                <span>Sound Alarm</span>
-              </button>
-              <button
-                onClick={() => setBuzzerMuted(!buzzerMuted)}
-                className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-2 transition ${
-                  buzzerMuted
-                    ? 'bg-emerald-950 border-emerald-800 text-emerald-300'
-                    : 'bg-slate-800 border-slate-700 text-slate-300'
-                }`}
-              >
-                {buzzerMuted ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-                <span>{buzzerMuted ? 'Unmute Buzzer' : 'Mute Buzzer'}</span>
+                <Send className="w-3.5 h-3.5" />
+                <span>Send Manual Alert</span>
               </button>
             </div>
           </div>
 
-          {/* Current Frame PPE Detections Breakdown */}
-          <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider border-b border-slate-800 pb-2">
-              Detected PPE In Frame
-            </h3>
-
+          {/* Detected Objects in Frame */}
+          <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+            <span className="text-xs font-bold text-white uppercase tracking-wider block border-b border-slate-800 pb-2">
+              Detected in Camera
+            </span>
             {detectionResult.detectedClasses?.length === 0 ? (
-              <p className="text-xs text-slate-500 py-3 text-center">
-                No PPE detected in camera view yet.
+              <p className="text-xs text-slate-500 py-2 text-center">
+                {isStreaming ? 'No PPE gear detected yet.' : 'Turn on camera to detect gear.'}
               </p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 {detectionResult.detectedClasses.map((item, idx) => (
                   <div
                     key={idx}
-                    className="flex items-center justify-between p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-xs"
+                    className="flex items-center justify-between p-2 rounded-lg bg-slate-950 border border-slate-800 text-xs"
                   >
-                    <span className="font-semibold text-slate-200 capitalize">{item.name || item.class}</span>
+                    <span className="font-bold text-slate-200 capitalize">{item.name || item.class}</span>
                     <span className="font-mono text-emerald-400 font-bold text-[11px]">
                       {Math.round((item.confidence || 0.85) * 100)}%
                     </span>

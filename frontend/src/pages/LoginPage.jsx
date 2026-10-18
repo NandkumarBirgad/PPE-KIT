@@ -42,7 +42,7 @@ export default function LoginPage() {
     } catch (err) {
       console.error('Login error:', err);
       if (err.code === 'ERR_NETWORK' || !err.response) {
-        setError('Backend API Server (http://localhost:5000) शी संपर्क होत नाही. कृपया backend app.py चालू असल्याची खात्री करा.');
+        setError('Cannot connect to Backend API Server (http://localhost:5000). Please ensure backend app.py is running.');
       } else {
         setError(err.response?.data?.message || 'Authentication failed. Please verify credentials.');
       }
@@ -160,7 +160,7 @@ export default function LoginPage() {
             {/* QUICK 1-CLICK ACCESS BUTTONS (Ultra Clear & Fast) */}
             <div className="mb-6 space-y-2.5">
               <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider font-mono">
-                ⚡ Quick 1-Click Login (झटपट प्रवेश)
+                ⚡ Quick 1-Click Login
               </p>
 
               {/* 1-Click Super Admin */}
@@ -176,7 +176,7 @@ export default function LoginPage() {
                   </div>
                   <div>
                     <div className="text-xs font-bold text-blue-950 group-hover:text-blue-700">
-                      Super Admin (सुपर अ‍ॅडमिन)
+                      Super Admin
                     </div>
                     <div className="text-[10px] text-slate-500 font-mono">
                       Full Plant Control • All Cameras & Settings
@@ -201,7 +201,7 @@ export default function LoginPage() {
                   </div>
                   <div>
                     <div className="text-xs font-bold text-emerald-950 group-hover:text-emerald-700">
-                      Zone Supervisor (झोन सुपरवायझर)
+                      Zone Supervisor
                     </div>
                     <div className="text-[10px] text-slate-500 font-mono">
                       Bay 01 Marshal • Local Buzzer & Alerts

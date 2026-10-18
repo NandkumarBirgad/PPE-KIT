@@ -1,4 +1,14 @@
+import sys
 import os
+
+# Safe UTF-8 console output for Windows cmd/powershell
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 from flask import Flask, jsonify
 from flask_cors import CORS
 from config import Config
@@ -41,6 +51,11 @@ def create_app():
     app.register_blueprint(report_bp)
     app.register_blueprint(camera_bp)
 
+    from flask import send_from_directory
+    @app.route("/uploads/<path:filename>", methods=["GET"])
+    def serve_upload(filename):
+        return send_from_directory(Config.UPLOAD_FOLDER, filename)
+
     @app.route("/", methods=["GET"])
     def root():
         return jsonify({
@@ -48,6 +63,7 @@ def create_app():
             "version": "2.4.0",
             "engine": "Python Flask + Ultralytics YOLOv8",
             "status": "Operational",
+            "storage": "Cloudinary Active (Cloud: ddiyh7wmr)",
             "endpoints": [
                 "/api/health",
                 "/api/auth/login",

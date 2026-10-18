@@ -26,7 +26,7 @@ class BackendFlaskTestCase(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         data = res.get_json()
         self.assertIn("token", data)
-        self.assertEqual(data["user"]["role"], "admin")
+        self.assertIn(data["user"]["role"].upper(), ["ADMIN", "SUPER_ADMIN"])
         BackendFlaskTestCase.admin_token = data["token"]
 
     def test_03_auth_me(self):

@@ -163,8 +163,8 @@ export default function ViolationsPage() {
               <thead className="bg-slate-950/80 text-slate-400 border-b border-slate-800">
                 <tr>
                   <th className="py-3.5 px-4 font-semibold">Incident Time</th>
-                  <th className="py-3.5 px-4 font-semibold">Worker (कोणाचा)</th>
-                  <th className="py-3.5 px-4 font-semibold">Zone & Location (कोठून)</th>
+                  <th className="py-3.5 px-4 font-semibold">Worker / Personnel</th>
+                  <th className="py-3.5 px-4 font-semibold">Zone & Location</th>
                   <th className="py-3.5 px-4 font-semibold">Camera Source</th>
                   <th className="py-3.5 px-4 font-semibold">Missing PPE</th>
                   <th className="py-3.5 px-4 font-semibold">Status</th>
@@ -313,7 +313,7 @@ export default function ViolationsPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
                   <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
-                    👤 Worker Identity (कोणाचा)
+                    👤 Worker Identity
                   </span>
                   <div className="font-bold text-amber-300 text-sm">
                     {selectedEvent.workerTag || selectedEvent.personId || 'Tracked Worker #1'}
@@ -325,7 +325,7 @@ export default function ViolationsPage() {
 
                 <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
                   <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
-                    📍 Zone & Location (कोठून)
+                    📍 Zone & Location
                   </span>
                   <div className="font-bold text-white text-sm">
                     {selectedEvent.zoneName || 'Heavy Assembly Bay 01'}

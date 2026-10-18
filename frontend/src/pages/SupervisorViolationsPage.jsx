@@ -151,8 +151,8 @@ export default function SupervisorViolationsPage() {
             <table className="w-full text-left text-xs text-slate-300">
               <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
                 <tr>
-                  <th className="p-3.5">Worker (कोणाचा)</th>
-                  <th className="p-3.5">Zone & Location (कोठून)</th>
+                  <th className="p-3.5">Worker / Personnel</th>
+                  <th className="p-3.5">Zone & Location</th>
                   <th className="p-3.5">Camera Feed</th>
                   <th className="p-3.5">Missing PPE Equipment</th>
                   <th className="p-3.5">Review Status</th>
@@ -244,7 +244,7 @@ export default function SupervisorViolationsPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
                   <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
-                    👤 Worker (कोणाचा)
+                    👤 Worker Identity
                   </span>
                   <div className="font-bold text-amber-300">
                     {selectedViolation.workerTag || selectedViolation.personId || 'Worker #1'}
@@ -253,7 +253,7 @@ export default function SupervisorViolationsPage() {
 
                 <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
                   <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
-                    📍 Location (कोठून)
+                    📍 Zone & Location
                   </span>
                   <div className="font-bold text-white">
                     {selectedViolation.zoneName}

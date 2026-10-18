@@ -1,10 +1,39 @@
+import sys
 import datetime
 from werkzeug.security import generate_password_hash
 from config import Config
 
+# Ensure Windows terminal doesn't crash on emoji logging
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 db_client = None
 db_instance = None
-is_mongo_connected = False
+
+class _MongoConnectionProxy:
+    def __init__(self):
+        self._connected = False
+
+    def set_connected(self, status: bool):
+        self._connected = bool(status)
+
+    def __bool__(self):
+        return self._connected
+
+    def __str__(self):
+        return str(self._connected)
+
+    def __repr__(self):
+        return repr(self._connected)
+
+    def __eq__(self, other):
+        return self._connected == bool(other)
+
+is_mongo_connected = _MongoConnectionProxy()
 
 # In-memory storage fallback collections
 mem_users = []
@@ -14,17 +43,17 @@ mem_notifications = []
 mem_cameras = []
 
 def init_db():
-    global db_client, db_instance, is_mongo_connected
+    global db_client, db_instance
     try:
         from pymongo import MongoClient
         db_client = MongoClient(Config.MONGODB_URI, serverSelectionTimeoutMS=2500)
         # Test connection
         db_client.server_info()
         db_instance = db_client[Config.DB_NAME]
-        is_mongo_connected = True
+        is_mongo_connected.set_connected(True)
         print(f"📦 MongoDB connected successfully to database: {Config.DB_NAME}")
     except Exception as e:
-        is_mongo_connected = False
+        is_mongo_connected.set_connected(False)
         print(f"⚠️ MongoDB connection notice: {e}")
         print("ℹ️ Operating with in-process resilient collection store.")
     
@@ -34,7 +63,7 @@ def get_db():
     return db_instance
 
 def get_status():
-    return is_mongo_connected
+    return bool(is_mongo_connected)
 
 def seed_defaults():
     # 1. Seed Super Admin & Zone Supervisors
