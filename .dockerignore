@@ -1,0 +1,10 @@
+**/.git
+**/.gitignore
+**/.vscode
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+**/venv
+**/.env.local
+backend/uploads/evidence/*

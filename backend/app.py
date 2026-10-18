@@ -24,6 +24,7 @@ from routes.zone_routes import zone_bp
 from routes.user_routes import user_bp
 from routes.report_routes import report_bp
 from routes.camera_routes import camera_bp
+from routes.event_routes import event_bp
 
 def create_app():
     app = Flask(__name__)
@@ -50,6 +51,7 @@ def create_app():
     app.register_blueprint(user_bp)
     app.register_blueprint(report_bp)
     app.register_blueprint(camera_bp)
+    app.register_blueprint(event_bp)
 
     from flask import send_from_directory
     @app.route("/uploads/<path:filename>", methods=["GET"])

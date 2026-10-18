@@ -1,0 +1,51 @@
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: ppe_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: ppe_compliance
+    volumes:
+      - mongo-data:/data/db
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ppe_backend
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - HOST=0.0.0.0
+      - DEBUG=False
+      - MONGODB_URI=mongodb://mongodb:27017/ppe_compliance
+      - DB_NAME=ppe_compliance
+      - JWT_SECRET=ppe_compliance_jwt_secret_key_2026_enterprise
+      - MODEL_PATH=models/ppe_best.pt
+      - DEFAULT_CONFIDENCE=0.35
+      - CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME:-ddiyh7wmr}
+      - CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY:-193984226466766}
+      - CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET:-a7u5XpdqUcVenf68P9O7-MV0Q9c}
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./backend/models:/app/models
+    depends_on:
+      - mongodb
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ppe_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  mongo-data:

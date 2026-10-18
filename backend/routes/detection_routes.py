@@ -18,6 +18,7 @@ from ai_engine.ppe_model import decode_image, encode_image_to_base64, detect_ppe
 from ai_engine.compliance import evaluate_compliance, draw_compliance_annotations
 from auth import token_required
 from storage import upload_evidence_image, is_cloudinary_enabled
+from alerts import dispatch_violation_alert
 
 detection_bp = Blueprint("detection_bp", __name__)
 
@@ -312,6 +313,8 @@ def create_detection():
             col = get_detections_col()
             res = col.insert_one(event_doc)
             event_doc["_id"] = str(res.inserted_id)
+            if compliance_status == "VIOLATION":
+                dispatch_violation_alert(event_doc, supervisor_alert)
             return jsonify({
                 "message": "Event recorded", 
                 "event": event_doc,
@@ -322,6 +325,8 @@ def create_detection():
 
     event_doc["_id"] = "det_" + str(int(time.time() * 1000))
     mem_detections.insert(0, event_doc)
+    if compliance_status == "VIOLATION":
+        dispatch_violation_alert(event_doc, supervisor_alert)
     return jsonify({
         "message": "Event recorded", 
         "event": event_doc,

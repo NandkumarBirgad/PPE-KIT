@@ -3,6 +3,7 @@ import datetime
 from flask import Blueprint, request, jsonify
 from database import is_mongo_connected, get_zones_col, mem_zones, get_notifications_col, mem_notifications
 from auth import token_required, admin_required
+from routes.event_routes import broadcast_event
 
 zone_bp = Blueprint("zone_bp", __name__)
 
@@ -211,6 +212,14 @@ def trigger_zone_buzzer(id):
     buzzer_sound = zone.get("buzzerSound", "siren") if zone else "siren"
     is_test = data.get("isTest", False)
 
+    # Broadcast real-time buzzer trigger to all connected client dashboards
+    broadcast_event("BUZZER_TRIGGERED", {
+        "zoneId": str(id),
+        "zoneName": zone_name,
+        "buzzerSound": buzzer_sound,
+        "isTest": is_test
+    })
+
     return jsonify({
         "success": True,
         "zoneId": str(id),
@@ -265,6 +274,12 @@ def get_buzzers():
 def silence_all_buzzers():
     for z in mem_zones:
         z["buzzerEnabled"] = False
+    
+    # Broadcast real-time silence event to all dashboards
+    broadcast_event("BUZZER_SILENCED", {
+        "timestamp": time.time()
+    })
+
     return jsonify({"message": "All zone floor buzzers have been silenced.", "success": True}), 200
 
 # Get all supervisors with zone mapping

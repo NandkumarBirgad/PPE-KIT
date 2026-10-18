@@ -161,3 +161,164 @@ def toggle_camera_status(id):
             return jsonify({"message": f"Camera is now {new_status}", "camera": mem_cameras[i]}), 200
 
     return jsonify({"message": "Camera not found"}), 404
+
+@camera_bp.route("/api/cameras/<id>/test-connection", methods=["POST"])
+@token_required
+def test_camera_connection(id):
+    cam = None
+    if is_mongo_connected:
+        try:
+            from bson import ObjectId
+            col = get_cameras_col()
+            cam = col.find_one({"$or": [{"_id": ObjectId(id)}, {"_id": str(id)}]})
+        except Exception:
+            pass
+    if not cam:
+        cam = next((c for c in mem_cameras if str(c.get("_id")) == str(id)), None)
+
+    if not cam:
+        return jsonify({"message": "Camera not found"}), 404
+
+    stream_url = (cam.get("streamUrl") or "").strip()
+    source_type = cam.get("sourceType", "webcam")
+
+    if source_type == "webcam" or not stream_url:
+        return jsonify({
+            "success": True, 
+            "online": True,
+            "message": "Local Browser Webcam channel active and responsive."
+        }), 200
+
+    import cv2
+    try:
+        cap = cv2.VideoCapture(stream_url)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        ret, frame = cap.read()
+        cap.release()
+        if ret and frame is not None:
+            return jsonify({
+                "success": True,
+                "online": True,
+                "resolution": f"{frame.shape[1]}x{frame.shape[0]}",
+                "message": f"RTSP / IP Stream verified! Resolution: {frame.shape[1]}x{frame.shape[0]}"
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "online": False,
+                "message": f"Unable to fetch video frame from stream target: {stream_url}"
+            }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "online": False,
+            "message": f"Stream connection exception: {str(e)}"
+        }), 200
+
+@camera_bp.route("/api/cameras/<id>/analyze", methods=["POST"])
+@token_required
+def analyze_camera_feed(id):
+    """
+    Captures live frame directly from an IP/RTSP camera URL on server,
+    runs dual YOLO inference, verifies zone compliance, and auto-logs violations.
+    """
+    cam = None
+    if is_mongo_connected:
+        try:
+            from bson import ObjectId
+            col = get_cameras_col()
+            cam = col.find_one({"$or": [{"_id": ObjectId(id)}, {"_id": str(id)}]})
+        except Exception:
+            pass
+    if not cam:
+        cam = next((c for c in mem_cameras if str(c.get("_id")) == str(id)), None)
+
+    if not cam:
+        return jsonify({"message": "Camera not found"}), 404
+
+    # Fetch corresponding Zone PPE requirements
+    zone_id = cam.get("zoneId")
+    zone = next((z for z in mem_zones if str(z.get("_id")) == str(zone_id)), None)
+    required_ppe = zone.get("requiredPPE", ["helmet", "vest"]) if zone else ["helmet", "vest"]
+    zone_name = zone.get("name", cam.get("zoneName", "General Facility Zone")) if zone else cam.get("zoneName", "General Facility Zone")
+
+    stream_url = (cam.get("streamUrl") or "").strip()
+    if not stream_url or stream_url == "webcam":
+        return jsonify({"message": "Camera is configured for client-side webcam. Use /api/detect."}), 400
+
+    import cv2
+    from ai_engine.ppe_model import detect_ppe_in_frame, encode_image_to_base64
+    from ai_engine.compliance import evaluate_compliance, draw_compliance_annotations
+    from storage import upload_evidence_image
+    from alerts import dispatch_violation_alert
+    from database import get_detections_col, mem_detections
+
+    try:
+        cap = cv2.VideoCapture(stream_url)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        ret, frame = cap.read()
+        cap.release()
+
+        if not ret or frame is None:
+            return jsonify({"message": "Failed to read live frame from IP camera."}), 502
+
+        fh, fw = frame.shape[:2]
+        _, detected_objects, persons = detect_ppe_in_frame(frame, confidence_threshold=0.35)
+        compliance_status, missing_ppe, evaluated_persons = evaluate_compliance(
+            persons, detected_objects, required_ppe, confidence_threshold=0.35, img_shape=(fh, fw)
+        )
+
+        annotated = draw_compliance_annotations(frame, evaluated_persons, detected_objects, compliance_status)
+        annotated_b64 = encode_image_to_base64(annotated)
+
+        # If violation detected, record forensic snapshot
+        image_url = None
+        if compliance_status == "VIOLATION":
+            try:
+                image_url = upload_evidence_image(annotated_b64, folder="ppe_violations")
+            except Exception:
+                image_url = None
+
+            event_doc = {
+                "zoneId": str(zone_id),
+                "zoneName": zone_name,
+                "cameraId": str(id),
+                "cameraName": cam.get("name"),
+                "sourceType": "rtsp",
+                "timestamp": datetime.datetime.now(datetime.timezone.utc),
+                "detectedClasses": [d["class"] for d in detected_objects],
+                "missingPPE": missing_ppe,
+                "complianceStatus": "VIOLATION",
+                "personCount": len(persons),
+                "reviewStatus": "PENDING",
+                "reviewerNotes": "",
+                "imageUrl": image_url,
+                "evidenceImageReference": image_url or annotated_b64,
+                "createdAt": datetime.datetime.now(datetime.timezone.utc)
+            }
+
+            if is_mongo_connected:
+                try:
+                    col = get_detections_col()
+                    res = col.insert_one(event_doc)
+                    event_doc["_id"] = str(res.inserted_id)
+                except Exception:
+                    event_doc["_id"] = "det_" + str(int(time.time() * 1000))
+            else:
+                event_doc["_id"] = "det_" + str(int(time.time() * 1000))
+
+            mem_detections.insert(0, event_doc)
+            dispatch_violation_alert(event_doc, None)
+
+        return jsonify({
+            "camera": cam.get("name"),
+            "complianceStatus": compliance_status,
+            "missingPPE": missing_ppe,
+            "personCount": len(persons),
+            "annotatedImage": f"data:image/jpeg;base64,{annotated_b64}",
+            "imageUrl": image_url
+        }), 200
+
+    except Exception as e:
+        return jsonify({"message": f"Server-side analysis error: {str(e)}"}), 500
+

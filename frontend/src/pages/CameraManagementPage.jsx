@@ -150,6 +150,20 @@ export default function CameraManagementPage() {
     }
   };
 
+  const [testingCameraId, setTestingCameraId] = useState(null);
+
+  const handleTestConnection = async (cam) => {
+    setTestingCameraId(cam._id);
+    try {
+      const res = await api.post(`/cameras/${cam._id}/test-connection`);
+      showToast(res.data?.message || 'Camera connection verified', !res.data?.success);
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to ping camera feed', true);
+    } finally {
+      setTestingCameraId(null);
+    }
+  };
+
   const handleToggleStatus = async (cam) => {
     try {
       const res = await api.post(`/cameras/${cam._id}/toggle-status`);
@@ -285,13 +299,25 @@ export default function CameraManagementPage() {
 
               {/* Action Buttons */}
               <div className="pt-3 border-t border-slate-800 flex items-center justify-between">
-                <Link
-                  to="/admin/live"
-                  className="text-xs text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  <span>Inspect Stream</span>
-                </Link>
+                <div className="flex items-center gap-3">
+                  <Link
+                    to="/admin/live"
+                    className="text-xs text-sky-400 hover:text-sky-300 font-semibold flex items-center gap-1"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span>Live Stream</span>
+                  </Link>
+
+                  <button
+                    onClick={() => handleTestConnection(cam)}
+                    disabled={testingCameraId === cam._id}
+                    className="text-[11px] text-slate-400 hover:text-emerald-400 font-medium flex items-center gap-1 transition"
+                    title="Ping and verify live camera feed"
+                  >
+                    <Radio className={`w-3 h-3 ${testingCameraId === cam._id ? 'animate-pulse text-amber-400' : 'text-slate-400'}`} />
+                    <span>{testingCameraId === cam._id ? 'Pinging...' : 'Test Feed'}</span>
+                  </button>
+                </div>
 
                 <div className="flex items-center gap-2">
                   <button
