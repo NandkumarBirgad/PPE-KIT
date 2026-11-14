@@ -143,7 +143,7 @@ export default function SupervisorManagementPage() {
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Zone Supervisor Directory</h1>
             <span className="px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-400 text-[10px] font-bold">
-              {supervisors.length} Sector Supervisors
+              {supervisors.length} Zone Supervisors
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
@@ -198,7 +198,7 @@ export default function SupervisorManagementPage() {
                   </span>
                 </div>
 
-                {/* Assigned Sector Badge */}
+                {/* Assigned Zone Badge */}
                 <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/80 mb-4 space-y-2 text-xs">
                   <div className="flex items-center justify-between text-slate-400">
                     <span className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1">
@@ -260,7 +260,7 @@ export default function SupervisorManagementPage() {
             <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
               <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <UserCheck className="w-4 h-4 text-emerald-400" />
-                Assign Sector Safety Supervisor
+                Assign Zone Safety Supervisor
               </h3>
               <button
                 onClick={() => setShowModal(false)}

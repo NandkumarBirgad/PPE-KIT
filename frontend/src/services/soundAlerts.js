@@ -69,7 +69,7 @@ export const playWarningHorn = (durationSeconds = 1.2) => {
     const ctx = getAudioContext();
     const now = ctx.currentTime;
 
-    // Dual frequency industrial horn (440Hz + 554Hz major third creates an industrial diesel/hooter tone)
+    // Dual frequency industrial horn (440Hz + 554Hz major third creates an industrial buzzer tone)
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
     const gain = ctx.createGain();

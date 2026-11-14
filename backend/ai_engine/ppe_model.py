@@ -1,4 +1,5 @@
 import os
+import time
 import cv2
 import numpy as np
 import base64
@@ -22,12 +23,12 @@ def get_yolo_models():
                 print(f"🤖 Loading specialized PPE YOLO model: {model_path}")
                 _ppe_model = YOLO(model_path)
             else:
-                print("🤖 Loading base YOLOv8 model for PPE...")
-                _ppe_model = YOLO("yolov8n.pt")
+                print(f"🤖 Loading base YOLOv8 model for PPE from {Config.PERSON_MODEL_PATH}...")
+                _ppe_model = YOLO(Config.PERSON_MODEL_PATH)
 
             # 2. Load Person Detector
-            print("🤖 Loading Person Detector (yolov8n.pt)...")
-            _person_model = YOLO("yolov8n.pt")
+            print(f"🤖 Loading Person Detector ({Config.PERSON_MODEL_PATH})...")
+            _person_model = YOLO(Config.PERSON_MODEL_PATH)
 
             _model_loaded = True
             _model_info["classes"] = list(_ppe_model.names.values()) if hasattr(_ppe_model, 'names') else []
@@ -53,20 +54,23 @@ def get_model_status():
 
 def decode_image(image_input):
     """Decodes base64 string, byte buffer, or file storage to an OpenCV BGR numpy array."""
-    if isinstance(image_input, str):
-        if image_input.startswith("data:image"):
-            image_input = image_input.split(",")[1]
-        img_bytes = base64.b64decode(image_input)
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        return img
-    elif hasattr(image_input, "read"):
-        img_bytes = image_input.read()
-        nparr = np.frombuffer(img_bytes, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        return img
-    elif isinstance(image_input, np.ndarray):
-        return image_input
+    try:
+        if isinstance(image_input, str):
+            if image_input.startswith("data:image"):
+                image_input = image_input.split(",")[1]
+            img_bytes = base64.b64decode(image_input)
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            return img
+        elif hasattr(image_input, "read"):
+            img_bytes = image_input.read()
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            return img
+        elif isinstance(image_input, np.ndarray):
+            return image_input
+    except Exception:
+        return None
     return None
 
 def encode_image_to_base64(cv2_img):
@@ -74,11 +78,12 @@ def encode_image_to_base64(cv2_img):
     _, buffer = cv2.imencode('.jpg', cv2_img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
     return base64.b64encode(buffer).decode('utf-8')
 
-def detect_ppe_in_frame(img, confidence_threshold=0.35):
+def detect_ppe_in_frame(img, confidence_threshold=0.35, session_id=None, timestamp=None):
     """
     Runs dual inference on OpenCV BGR image:
     1. Detects Persons via person detector
     2. Detects PPE items (Helmet, Vest, Goggles, Gloves, Mask, Boots) via specialized PPE model
+    3. Tracks and assigns anonymous, session-scoped worker IDs (W-001, W-002, ...)
     Returns: (annotated_image, detected_objects, persons)
     """
     ppe_model, person_model = get_yolo_models()
@@ -148,57 +153,91 @@ def detect_ppe_in_frame(img, confidence_threshold=0.35):
                 "class": label,
                 "name": label,
                 "confidence": conf,
-                "bbox": xyxy
+                "bbox": xyxy,
+                "source": "yolo",
+                "is_synthetic": False
             })
 
+    # 2.5 Assign Anonymous Worker IDs via Tracker
+    if session_id is not None:
+        from ai_engine.tracker import get_session_tracker
+        from ai_engine.temporal_compliance import sanitize_timestamp
+        valid_ts = sanitize_timestamp(timestamp)
+        ts = time.monotonic() if valid_ts is None else valid_ts
+        tracker = get_session_tracker(
+            session_id,
+            iou_threshold=Config.TRACKER_IOU_THRESHOLD,
+            centroid_threshold=Config.TRACKER_CENTROID_THRESHOLD,
+            recovery_timeout_sec=Config.TRACKER_RECOVERY_TIMEOUT_SEC,
+            ambiguity_margin=Config.TRACKER_AMBIGUITY_MARGIN
+        )
+        tracked = tracker.update(persons, ts, img_shape=(h, w))
+        for p in persons:
+            matched_t = next((t for t in tracked if t["bbox"] == p["bbox"]), None)
+            if matched_t:
+                p["worker_id"] = matched_t["worker_id"]
+                p["track_id"] = matched_t["track_id"]
+            else:
+                p["worker_id"] = "W-UNK"
+                p["track_id"] = None
+    else:
+        for i, p in enumerate(persons):
+            p["worker_id"] = f"W-{i+1:03d}"
+            p["track_id"] = i + 1
+
     # 3. Supplemental Heuristic Visual Analyzer for Person Crops (Color & Geometry)
-    for person in persons:
-        px1, py1, px2, py2 = person["bbox"]
-        pw = px2 - px1
-        ph = py2 - py1
-        if pw <= 15 or ph <= 15:
-            continue
+    if getattr(Config, "ENABLE_HSV_HEURISTICS", True):
+        for person in persons:
+            px1, py1, px2, py2 = person["bbox"]
+            pw = px2 - px1
+            ph = py2 - py1
+            if pw <= 15 or ph <= 15:
+                continue
 
-        head_y2 = min(py1 + int(ph * 0.28), h)
-        head_crop = img[max(py1, 0):head_y2, max(px1, 0):min(px2, w)]
+            head_y2 = min(py1 + int(ph * 0.28), h)
+            head_crop = img[max(py1, 0):head_y2, max(px1, 0):min(px2, w)]
 
-        torso_y1 = head_y2
-        torso_y2 = min(py1 + int(ph * 0.65), h)
-        torso_crop = img[max(torso_y1, 0):torso_y2, max(px1, 0):min(px2, w)]
+            torso_y1 = head_y2
+            torso_y2 = min(py1 + int(ph * 0.65), h)
+            torso_crop = img[max(torso_y1, 0):torso_y2, max(px1, 0):min(px2, w)]
 
-        # Check for safety helmet color signatures (yellow, white, orange, red)
-        if head_crop.size > 0:
-            hsv_head = cv2.cvtColor(head_crop, cv2.COLOR_BGR2HSV)
-            yellow_mask = cv2.inRange(hsv_head, np.array([15, 80, 80]), np.array([35, 255, 255]))
-            orange_mask = cv2.inRange(hsv_head, np.array([5, 120, 100]), np.array([18, 255, 255]))
-            white_mask = cv2.inRange(hsv_head, np.array([0, 0, 190]), np.array([180, 25, 255]))
-            combined_helmet = cv2.bitwise_or(yellow_mask, cv2.bitwise_or(orange_mask, white_mask))
-            ratio_helmet = np.sum(combined_helmet > 0) / (head_crop.shape[0] * head_crop.shape[1] + 1e-5)
+            # Check for safety helmet color signatures (yellow, white, orange, red)
+            if head_crop.size > 0:
+                hsv_head = cv2.cvtColor(head_crop, cv2.COLOR_BGR2HSV)
+                yellow_mask = cv2.inRange(hsv_head, np.array([15, 80, 80]), np.array([35, 255, 255]))
+                orange_mask = cv2.inRange(hsv_head, np.array([5, 120, 100]), np.array([18, 255, 255]))
+                white_mask = cv2.inRange(hsv_head, np.array([0, 0, 190]), np.array([180, 25, 255]))
+                combined_helmet = cv2.bitwise_or(yellow_mask, cv2.bitwise_or(orange_mask, white_mask))
+                ratio_helmet = np.sum(combined_helmet > 0) / (head_crop.shape[0] * head_crop.shape[1] + 1e-5)
 
-            has_helmet = any(d["class"] == "helmet" and d["bbox"][1] < head_y2 for d in detected_objects)
-            if ratio_helmet > 0.16 and not has_helmet:
-                detected_objects.append({
-                    "class": "helmet",
-                    "name": "helmet",
-                    "confidence": min(0.72 + float(ratio_helmet * 0.4), 0.96),
-                    "bbox": [px1 + int(pw * 0.1), py1, px2 - int(pw * 0.1), head_y2]
-                })
+                has_helmet = any(d["class"] == "helmet" and d["bbox"][1] < head_y2 for d in detected_objects)
+                if ratio_helmet > 0.16 and not has_helmet:
+                    detected_objects.append({
+                        "class": "helmet",
+                        "name": "helmet",
+                        "confidence": min(0.72 + float(ratio_helmet * 0.4), 0.96),
+                        "bbox": [px1 + int(pw * 0.1), py1, px2 - int(pw * 0.1), head_y2],
+                        "source": "hsv",
+                        "is_synthetic": True
+                    })
 
-        # Check for safety vest color signatures (fluorescent lime/yellow, neon orange)
-        if torso_crop.size > 0:
-            hsv_torso = cv2.cvtColor(torso_crop, cv2.COLOR_BGR2HSV)
-            hi_vis_mask = cv2.inRange(hsv_torso, np.array([22, 100, 100]), np.array([45, 255, 255]))
-            hi_vis_orange = cv2.inRange(hsv_torso, np.array([8, 120, 120]), np.array([20, 255, 255]))
-            combined_vest = cv2.bitwise_or(hi_vis_mask, hi_vis_orange)
-            ratio_vest = np.sum(combined_vest > 0) / (torso_crop.shape[0] * torso_crop.shape[1] + 1e-5)
+            # Check for safety vest color signatures (fluorescent lime/yellow, neon orange)
+            if torso_crop.size > 0:
+                hsv_torso = cv2.cvtColor(torso_crop, cv2.COLOR_BGR2HSV)
+                hi_vis_mask = cv2.inRange(hsv_torso, np.array([22, 100, 100]), np.array([45, 255, 255]))
+                hi_vis_orange = cv2.inRange(hsv_torso, np.array([8, 120, 120]), np.array([20, 255, 255]))
+                combined_vest = cv2.bitwise_or(hi_vis_mask, hi_vis_orange)
+                ratio_vest = np.sum(combined_vest > 0) / (torso_crop.shape[0] * torso_crop.shape[1] + 1e-5)
 
-            has_vest = any(d["class"] == "vest" for d in detected_objects)
-            if ratio_vest > 0.15 and not has_vest:
-                detected_objects.append({
-                    "class": "vest",
-                    "name": "vest",
-                    "confidence": min(0.75 + float(ratio_vest * 0.35), 0.95),
-                    "bbox": [px1, torso_y1, px2, torso_y2]
-                })
+                has_vest = any(d["class"] == "vest" for d in detected_objects)
+                if ratio_vest > 0.15 and not has_vest:
+                    detected_objects.append({
+                        "class": "vest",
+                        "name": "vest",
+                        "confidence": min(0.75 + float(ratio_vest * 0.35), 0.95),
+                        "bbox": [px1, torso_y1, px2, torso_y2],
+                        "source": "hsv",
+                        "is_synthetic": True
+                    })
 
     return annotated, detected_objects, persons

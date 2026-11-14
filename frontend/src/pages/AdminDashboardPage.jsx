@@ -43,6 +43,7 @@ import {
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { playIndustrialSiren, playWarningHorn, stopAllSounds } from '../services/soundAlerts';
+import { getIncidentStatusBadge } from '../services/incidentLifecycle';
 
 export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
@@ -112,9 +113,9 @@ export default function AdminDashboardPage() {
         reason: 'Super Admin EHS Command Test',
         durationSeconds: 5
       });
-      showToast(`🚨 Industrial floor hooter dispatched to ${zone.name}!`);
+      showToast(`🚨 Floor Buzzer alert dispatched to ${zone.name}!`);
     } catch (err) {
-      showToast(`Audio siren test sounded for ${zone.name}`);
+      showToast(`Floor Buzzer test sounded for ${zone.name}`);
     } finally {
       setTimeout(() => setActiveZoneAction(null), 3000);
     }
@@ -128,7 +129,7 @@ export default function AdminDashboardPage() {
         missingPPE: ['helmet', 'vest'],
         message: 'Super Admin Directive: Mandatory Floor PPE Sweep'
       });
-      showToast(`📢 Safety Marshall alerted in ${zone.name} via WhatsApp/SMS`);
+      showToast(`📢 Zone Supervisor alerted in ${zone.name} via WhatsApp/SMS`);
     } catch (err) {
       showToast(`Alert dispatched to ${zone.supervisor?.name || 'Supervisor'}`);
     }
@@ -140,10 +141,10 @@ export default function AdminDashboardPage() {
       showToast('No violation data to export', true);
       return;
     }
-    const headers = ['Incident_ID', 'Zone', 'Missing_PPE', 'Review_Status', 'Timestamp'];
+    const headers = ['Incident_ID', 'Zone', 'Missing_PPE', 'Lifecycle_Status', 'Timestamp'];
     const rows = recentViolations.map((v) => [
       v._id || 'INC-' + Math.floor(Math.random() * 9000),
-      `"${v.zoneName || 'Sector'}"`,
+      `"${v.zoneName || 'Zone'}"`,
       `"${(v.missingPPE || []).join('; ') || 'Required PPE'}"`,
       v.reviewStatus || 'PENDING',
       v.createdAt ? new Date(v.createdAt).toISOString() : new Date().toISOString()
@@ -327,14 +328,14 @@ export default function AdminDashboardPage() {
           </div>
           <div className="mt-4">
             <h2 className="text-sm font-bold text-slate-900 group-hover:text-amber-600 transition-colors flex items-center justify-between">
-              <span>Industrial Sirens</span>
+              <span>Floor Buzzers</span>
               <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
             </h2>
             <p className="text-xs text-slate-500 mt-1">Trigger or silence audible alarms on shop floors</p>
           </div>
         </Link>
 
-        {/* 4. Safety Marshals & Zones */}
+        {/* 4. Safety Zones & Supervisors */}
         <Link
           to="/admin/supervisors"
           className="p-5 rounded-2xl bg-white border border-emerald-100 hover:border-emerald-500 shadow-sm hover:shadow-md transition-all group flex flex-col justify-between"
@@ -349,10 +350,10 @@ export default function AdminDashboardPage() {
           </div>
           <div className="mt-4">
             <h2 className="text-sm font-bold text-slate-900 group-hover:text-emerald-600 transition-colors flex items-center justify-between">
-              <span>Safety Marshals</span>
+              <span>Zone Supervisors</span>
               <ChevronRight className="w-4 h-4 text-slate-400 group-hover:translate-x-1 transition-transform" />
             </h2>
-            <p className="text-xs text-slate-500 mt-1">Supervisors assigned to Bays 01, 02 & 03</p>
+            <p className="text-xs text-slate-500 mt-1">Supervisors assigned to Safety Zones</p>
           </div>
         </Link>
       </div>
@@ -404,7 +405,7 @@ export default function AdminDashboardPage() {
         {/* Zones & Active Supervisors */}
         <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Hazard Zones & Marshals</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider">Safety Zones & Supervisors</span>
             <div className="p-2 rounded-xl bg-indigo-950 border border-indigo-800/80 text-indigo-400">
               <MapPin className="w-4 h-4" />
             </div>
@@ -412,10 +413,10 @@ export default function AdminDashboardPage() {
           <div className="mt-3">
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-black text-white">{summary.totalZones}</span>
-              <span className="text-xs text-slate-400 font-semibold">Sectors</span>
+              <span className="text-xs text-slate-400 font-semibold">Zones</span>
             </div>
             <div className="text-[11px] text-indigo-400 font-medium flex items-center gap-1 mt-1 font-mono">
-              <Users className="w-3 h-3" /> {summary.activeSupervisors} Marshals Assigned
+              <Users className="w-3 h-3" /> {summary.activeSupervisors} Supervisors Assigned
             </div>
           </div>
         </div>
@@ -423,7 +424,7 @@ export default function AdminDashboardPage() {
         {/* Violations */}
         <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex flex-col justify-between">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Active Infractions</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider">Active PPE Violations</span>
             <div className="p-2 rounded-xl bg-rose-950 border border-rose-800/80 text-rose-400">
               <AlertTriangle className="w-4 h-4" />
             </div>
@@ -452,7 +453,7 @@ export default function AdminDashboardPage() {
               </h2>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Live sector telemetry with instant floor hooter trigger, marshal contact, and camera status
+              Live zone telemetry with instant Floor Buzzer trigger, supervisor contact, and camera status
             </p>
           </div>
           <div className="flex items-center gap-2 font-mono text-[11px]">
@@ -475,7 +476,7 @@ export default function AdminDashboardPage() {
                     : 'bg-slate-950/80 border-slate-800 hover:border-slate-700'
                 }`}
               >
-                {/* Sector header */}
+                {/* Zone header */}
                 <div>
                   <div className="flex items-center justify-between">
                     <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
@@ -499,10 +500,10 @@ export default function AdminDashboardPage() {
                     ))}
                   </div>
 
-                  {/* Sector Supervisor Details */}
+                  {/* Zone Supervisor Details */}
                   <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
                     <div className="text-slate-400">
-                      <span className="text-[10px] text-slate-500 block">Floor Marshall</span>
+                      <span className="text-[10px] text-slate-500 block">Zone Supervisor</span>
                       <span className="font-semibold text-slate-200">{z.supervisor?.name || 'On Duty'}</span>
                     </div>
                     <div className="text-right text-slate-400 font-mono text-[10px]">
@@ -525,7 +526,7 @@ export default function AdminDashboardPage() {
                     title="Sound authentic industrial alarm in this zone"
                   >
                     <Volume2 className="w-3.5 h-3.5" />
-                    <span>{hasActiveAlarm ? 'SIREN SOUNDING' : 'Sound Buzzer'}</span>
+                    <span>{hasActiveAlarm ? 'BUZZER SOUNDING' : 'Sound Floor Buzzer'}</span>
                   </button>
 
                   <button
@@ -534,7 +535,7 @@ export default function AdminDashboardPage() {
                     title="Dispatch warning directive to supervisor"
                   >
                     <Send className="w-3 h-3 text-sky-400" />
-                    <span>Alert Marshal</span>
+                    <span>Alert Supervisor</span>
                   </button>
                 </div>
               </div>
@@ -549,7 +550,7 @@ export default function AdminDashboardPage() {
         <div className="lg:col-span-2 p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-white text-sm">7-Day EHS Compliance vs Infraction Trend</h3>
+              <h3 className="font-bold text-white text-sm">7-Day EHS Compliance vs PPE Violation Trend</h3>
               <p className="text-xs text-slate-400 mt-0.5">Automated AI detection event distribution over time</p>
             </div>
             <span className="text-[11px] font-mono text-sky-400 bg-sky-950/60 border border-sky-800 px-2 py-0.5 rounded">
@@ -578,7 +579,7 @@ export default function AdminDashboardPage() {
                 />
                 <Legend wrapperStyle={{ fontSize: '11px' }} />
                 <Area type="monotone" dataKey="compliant" name="Compliant Man-Passes" stroke="#10b981" fillOpacity={1} fill="url(#compGrad)" />
-                <Area type="monotone" dataKey="violation" name="Safety Infractions" stroke="#ef4444" fillOpacity={1} fill="url(#violGrad)" />
+                <Area type="monotone" dataKey="violation" name="PPE Violations" stroke="#ef4444" fillOpacity={1} fill="url(#violGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -651,6 +652,12 @@ export default function AdminDashboardPage() {
                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                   cam.status === 'ONLINE'
                     ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                    : cam.status === 'WARNING'
+                    ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                    : cam.status === 'DEGRADED'
+                    ? 'bg-purple-950 text-purple-300 border border-purple-800'
+                    : cam.status === 'COMPLETED'
+                    ? 'bg-sky-950 text-sky-300 border border-sky-800'
                     : 'bg-rose-950 text-rose-400 border border-rose-800'
                 }`}>
                   {cam.status}
@@ -678,17 +685,17 @@ export default function AdminDashboardPage() {
           {recentViolations.length === 0 ? (
             <div className="py-12 text-center text-slate-500 text-xs">
               <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-500/50" />
-              Zero safety infractions reported. Plant floor is 100% compliant.
+              Zero PPE violations reported. Plant floor is 100% compliant.
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-slate-300">
                 <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold font-mono">
                   <tr>
-                    <th className="p-3 rounded-l-lg">Sector</th>
+                    <th className="p-3 rounded-l-lg">Zone</th>
                     <th className="p-3">Missing PPE</th>
                     <th className="p-3">Detected Gear</th>
-                    <th className="p-3">Review Status</th>
+                    <th className="p-3">Lifecycle Status</th>
                     <th className="p-3 rounded-r-lg text-right">Timestamp</th>
                   </tr>
                 </thead>
@@ -705,13 +712,14 @@ export default function AdminDashboardPage() {
                         {v.detectedClasses?.map((c) => c.name || c.class).join(', ') || 'Worker Body'}
                       </td>
                       <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          v.reviewStatus === 'APPROVED'
-                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                            : 'bg-amber-950 text-amber-300 border border-amber-800'
-                        }`}>
-                          {v.reviewStatus || 'PENDING'}
-                        </span>
+                        {(() => {
+                          const badge = getIncidentStatusBadge(v);
+                          return (
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${badge.badgeClass}`}>
+                              {badge.label} {badge.subLabel ? `(${badge.subLabel})` : ''}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="p-3 text-right text-slate-500 text-[11px] font-mono">
                         {v.createdAt ? new Date(v.createdAt).toLocaleTimeString() : 'Just now'}

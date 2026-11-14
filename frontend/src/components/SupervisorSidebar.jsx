@@ -10,16 +10,20 @@ import {
   HardHat,
   UserCheck,
   MapPin,
-  ShieldCheck
+  ShieldCheck,
+  Layers,
+  Settings
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const supervisorNavItems = [
   { name: 'My Zone Dashboard', path: '/supervisor/dashboard', icon: LayoutDashboard },
   { name: 'Live Zone Cameras', path: '/supervisor/live', icon: Camera },
+  { name: 'Camera Zone Polygons', path: '/supervisor/cameras', icon: Layers },
   { name: 'Zone Violations', path: '/supervisor/violations', icon: AlertTriangle },
   { name: 'Floor Buzzer Control', path: '/supervisor/buzzers', icon: Volume2 },
   { name: 'Dispatched Alerts', path: '/supervisor/notifications', icon: Bell },
+  { name: 'System Settings', path: '/supervisor/settings', icon: Settings },
 ];
 
 export default function SupervisorSidebar({ isOpen, setIsOpen }) {
@@ -44,20 +48,20 @@ export default function SupervisorSidebar({ isOpen, setIsOpen }) {
         {/* Assigned Zone Highlight Badge */}
         <div className="m-3 p-3 rounded-xl bg-emerald-950/40 border border-emerald-800/60">
           <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider block mb-1 flex items-center gap-1">
-            <MapPin className="w-3 h-3" /> Assigned Safety Sector
+            <MapPin className="w-3 h-3" /> Assigned Safety Zone
           </span>
           <div className="text-xs font-bold text-slate-100 truncate">
-            {user?.assignedZoneName || 'Heavy Assembly Bay 01'}
+            {user?.assignedZoneName || 'Heavy Assembly Zone 01'}
           </div>
           <div className="text-[10px] text-slate-400 mt-0.5 font-mono">
-            ID: {user?.assignedZoneId || 'BAY-01'}
+            ID: {user?.assignedZoneId || 'ZONE-01'}
           </div>
         </div>
 
         {/* Navigation links */}
         <nav className="p-3 space-y-1">
           <div className="px-3 pt-2 pb-1 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-            Sector Operations
+            Zone Operations
           </div>
           {supervisorNavItems.map((item) => {
             const Icon = item.icon;

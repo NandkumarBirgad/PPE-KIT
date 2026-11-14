@@ -28,6 +28,11 @@ backend/uploads/evidence/*
 *.swp
 *.swo
 
+# Environment variable files & secrets
+.env
+.env.*
+!.env.example
+
 # Node & Frontend dependencies
 node_modules/
 frontend/dist/

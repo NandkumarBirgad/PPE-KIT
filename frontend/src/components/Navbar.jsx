@@ -219,7 +219,7 @@ export default function Navbar({ toggleSidebar }) {
 
       {/* Right: Master Siren Trigger, Silence, Notifications & User */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Master Industrial Siren Test / Emergency Sounder Button */}
+        {/* Master Plant Alarm / Siren Test Button */}
         <div className="flex items-center gap-1.5 bg-slate-900/90 p-1 rounded-lg border border-slate-800">
           <button
             onClick={handleTriggerEmergencySiren}
@@ -229,18 +229,18 @@ export default function Navbar({ toggleSidebar }) {
                 ? 'bg-red-600 text-white animate-bounce'
                 : 'bg-red-950/70 hover:bg-red-900/90 text-red-300 border border-red-800/60'
             }`}
-            title="Sound Plant Alarm Siren (Test/Emergency)"
+            title="Sound Plant Alarm / Siren (Test/Emergency)"
           >
             <Siren className={`w-3.5 h-3.5 ${sirenPlaying ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">
-              {sirenPlaying ? 'SIREN ACTIVE' : 'TEST SIREN'}
+              {sirenPlaying ? 'PLANT ALARM ACTIVE' : 'TEST PLANT ALARM'}
             </span>
           </button>
 
           <button
             onClick={handleSilenceAll}
             className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
-            title="Silence All Floor Buzzers & Sirens"
+            title="Silence All Floor Buzzers & Plant Alarms"
           >
             <VolumeX className="w-4 h-4 text-amber-400" />
           </button>
@@ -316,7 +316,7 @@ export default function Navbar({ toggleSidebar }) {
               {notifications.length === 0 ? (
                 <div className="py-6 text-center text-xs text-slate-500">
                   <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-500/60" />
-                  No unresolved floor infractions
+                  No unresolved PPE violations
                 </div>
               ) : (
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
@@ -340,7 +340,7 @@ export default function Navbar({ toggleSidebar }) {
                         </div>
                         {n.supervisor && (
                           <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
-                            <span>Marshal: <span className="text-amber-300">{n.supervisor}</span></span>
+                            <span>Supervisor: <span className="text-amber-300">{n.supervisor}</span></span>
                             <span className="text-[9px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-300 font-mono">
                               {n.channel}
                             </span>
@@ -362,7 +362,7 @@ export default function Navbar({ toggleSidebar }) {
           </div>
           <div className="hidden lg:block text-left leading-tight">
             <span className="text-xs font-semibold text-slate-200 block truncate max-w-[120px]">
-              {user?.name || 'Safety Marshal'}
+              {user?.name || 'Zone Supervisor'}
             </span>
             <span className="text-[9px] text-amber-400 font-mono block">
               {user?.role === 'SUPER_ADMIN' || user?.role === 'admin' ? 'EHS HEAD' : user?.assignedZoneName || 'ZONE LEAD'}

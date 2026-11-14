@@ -13,17 +13,26 @@ import {
   Power,
   Tv,
   Layers,
-  ExternalLink
+  ExternalLink,
+  Activity,
+  Clock
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { canEditCameraPolygons } from '../services/cameraPolygonService';
+import CameraPolygonModal from '../components/CameraPolygonModal';
 
 export default function CameraManagementPage() {
+  const { user } = useAuth();
+  const isAdmin = canEditCameraPolygons(user);
+
   const [cameras, setCameras] = useState([]);
   const [zones, setZones] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingCamera, setEditingCamera] = useState(null);
+  const [polygonModalCamera, setPolygonModalCamera] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
 
   // Form State
@@ -115,7 +124,7 @@ export default function CameraManagementPage() {
       streamUrl: streamUrl.trim(),
       resolution,
       fps: Number(fps),
-      location: location.trim() || 'Facility Sector',
+      location: location.trim() || 'Facility Zone',
       status,
     };
 
@@ -151,6 +160,42 @@ export default function CameraManagementPage() {
   };
 
   const [testingCameraId, setTestingCameraId] = useState(null);
+
+  const getStatusBadge = (camStatus) => {
+    switch (camStatus) {
+      case 'ONLINE':
+        return {
+          label: 'ONLINE',
+          classes: 'bg-emerald-950 text-emerald-400 border-emerald-800',
+          dot: 'bg-emerald-400'
+        };
+      case 'WARNING':
+        return {
+          label: 'WARNING',
+          classes: 'bg-amber-950 text-amber-300 border-amber-700',
+          dot: 'bg-amber-400 animate-pulse'
+        };
+      case 'DEGRADED':
+        return {
+          label: 'DEGRADED',
+          classes: 'bg-purple-950 text-purple-300 border-purple-800',
+          dot: 'bg-purple-400'
+        };
+      case 'COMPLETED':
+        return {
+          label: 'COMPLETED',
+          classes: 'bg-sky-950 text-sky-300 border-sky-800',
+          dot: 'bg-sky-400'
+        };
+      case 'OFFLINE':
+      default:
+        return {
+          label: 'OFFLINE',
+          classes: 'bg-rose-950 text-rose-400 border-rose-800',
+          dot: 'bg-rose-400'
+        };
+    }
+  };
 
   const handleTestConnection = async (cam) => {
     setTestingCameraId(cam._id);
@@ -203,7 +248,7 @@ export default function CameraManagementPage() {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Configure CCTV streams, assign cameras to safety sectors, manage RTSP endpoints, and monitor feed connectivity
+            Configure CCTV streams, assign cameras to safety zones, manage RTSP endpoints, and monitor feed connectivity
           </p>
         </div>
 
@@ -215,13 +260,15 @@ export default function CameraManagementPage() {
             <Tv className="w-4 h-4 text-sky-400" />
             <span>Live Surveillance HUD</span>
           </Link>
-          <button
-            onClick={openCreateModal}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-lg shadow-sky-600/30 transition"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Add CCTV Camera</span>
-          </button>
+          {isAdmin && (
+            <button
+              onClick={openCreateModal}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-lg shadow-sky-600/30 transition"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add CCTV Camera</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -256,17 +303,26 @@ export default function CameraManagementPage() {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => handleToggleStatus(cam)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase transition ${
-                      cam.status === 'ONLINE'
-                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                        : 'bg-rose-950 text-rose-400 border border-rose-800'
-                    }`}
-                    title="Toggle Camera Online/Offline"
-                  >
-                    {cam.status}
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {(() => {
+                      const badge = getStatusBadge(cam.status);
+                      return (
+                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${badge.classes}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${badge.dot}`}></span>
+                          {badge.label}
+                        </span>
+                      );
+                    })()}
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleToggleStatus(cam)}
+                        className="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition"
+                        title="Toggle camera online/offline"
+                      >
+                        <Power className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Stream / Zone Metadata Card */}
@@ -294,7 +350,56 @@ export default function CameraManagementPage() {
                   <div className="text-[10px] text-slate-500 pt-1 border-t border-slate-800">
                     Location: {cam.location || 'Facility Deck'}
                   </div>
+
+                  <div className="flex items-center justify-between text-slate-400 pt-1 border-t border-slate-800">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1">
+                      <Layers className="w-3 h-3 text-sky-400" /> Zone Polygons:
+                    </span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                      Array.isArray(cam.zones) && cam.zones.length > 0
+                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                        : 'bg-slate-900 text-slate-400 border border-slate-800'
+                    }`}>
+                      {Array.isArray(cam.zones) && cam.zones.length > 0
+                        ? `${cam.zones.length} Configured`
+                        : 'Legacy Fallback'}
+                    </span>
+                  </div>
+
+                  {/* Health Telemetry & Failure Diagnostics */}
+                  {cam.status_reason && (
+                    <div className="text-[10px] text-slate-400 pt-1.5 border-t border-slate-800/80 flex items-start gap-1.5">
+                      <Activity className="w-3.5 h-3.5 text-sky-400 flex-shrink-0 mt-0.5" />
+                      <span className="leading-tight">{cam.status_reason}</span>
+                    </div>
+                  )}
+
+                  {cam.error_details && (
+                    <div className="text-[10px] text-rose-300 bg-rose-950/40 p-1.5 rounded border border-rose-800/60 font-mono">
+                      Error: {cam.error_details}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1 border-t border-slate-800/80 font-mono">
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-slate-500" /> Last Frame:
+                    </span>
+                    <span className="text-slate-300">
+                      {cam.last_frame_time_iso ? new Date(cam.last_frame_time_iso).toLocaleTimeString() : 'No frames recorded'}
+                    </span>
+                  </div>
                 </div>
+
+                {/* Calibrate Safety Zones Button */}
+                <button
+                  type="button"
+                  onClick={() => setPolygonModalCamera(cam)}
+                  className="w-full mt-1 mb-2 py-2 px-3 rounded-xl bg-sky-950/70 hover:bg-sky-900/80 border border-sky-800/80 text-sky-300 text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition"
+                  title="Configure camera polygon safety zones"
+                >
+                  <Layers className="w-3.5 h-3.5 text-sky-400" />
+                  <span>{isAdmin ? 'Calibrate Safety Zones' : 'View Safety Zones'}</span>
+                </button>
               </div>
 
               {/* Action Buttons */}
@@ -319,22 +424,24 @@ export default function CameraManagementPage() {
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => openEditModal(cam)}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-400 transition"
-                    title="Edit Camera"
-                  >
-                    <Edit3 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(cam._id)}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 transition"
-                    title="Delete Camera"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                {isAdmin && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => openEditModal(cam)}
+                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-400 transition"
+                      title="Edit Camera"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(cam._id)}
+                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-rose-400 transition"
+                      title="Delete Camera"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -477,6 +584,19 @@ export default function CameraManagementPage() {
             </form>
           </div>
         </div>
+      )}
+      {/* Camera Zone Polygon Calibration Modal */}
+      {polygonModalCamera && (
+        <CameraPolygonModal
+          camera={polygonModalCamera}
+          allCameras={cameras}
+          availableZones={zones}
+          onClose={() => setPolygonModalCamera(null)}
+          onSaved={(updatedCam) => {
+            fetchData();
+            showToast(`Safety zone polygons saved for camera "${updatedCam.name || polygonModalCamera.name}"`);
+          }}
+        />
       )}
     </div>
   );

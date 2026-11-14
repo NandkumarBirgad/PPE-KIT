@@ -44,6 +44,7 @@ def get_zone_by_id(id):
 
 @zone_bp.route("/api/zones", methods=["POST"])
 @token_required
+@admin_required
 def create_zone():
     data = request.get_json() or {}
     name = data.get("name", "").strip()
@@ -89,6 +90,7 @@ def create_zone():
 
 @zone_bp.route("/api/zones/<id>", methods=["PATCH"])
 @token_required
+@admin_required
 def update_zone(id):
     data = request.get_json() or {}
     

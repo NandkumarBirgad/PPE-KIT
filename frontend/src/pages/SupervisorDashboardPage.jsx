@@ -33,6 +33,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { playIndustrialSiren, playWarningHorn, stopAllSounds } from '../services/soundAlerts';
+import { getIncidentCanonicalState, getIncidentStatusBadge } from '../services/incidentLifecycle';
 
 const PPE_STANDARDS = [
   { id: 'helmet', label: 'Safety Hard Hat', spec: 'EN 397 / ANSI Z89.1', icon: '⛑️', required: true },
@@ -105,12 +106,12 @@ export default function SupervisorDashboardPage() {
       if (data.zoneId) {
         await api.post(`/zones/${data.zoneId}/trigger-buzzer`, {
           durationSeconds: 5,
-          reason: `Floor Marshall Manual ${type.toUpperCase()} Broadcast`
+          reason: `Zone Supervisor Manual ${type.toUpperCase()} Broadcast`
         });
       }
-      showToast(`🚨 Physical Floor Buzzer Triggered in ${data.zoneName || 'your sector'}!`);
+      showToast(`🚨 Physical Floor Buzzer Triggered in ${data.zoneName || 'your zone'}!`);
     } catch (err) {
-      showToast(`Local Audio Alert sounded for ${data.zoneName}`);
+      showToast(`Floor Buzzer sounded for ${data.zoneName}`);
     } finally {
       setTimeout(() => setSirenPlaying(false), 4000);
     }
@@ -140,38 +141,34 @@ export default function SupervisorDashboardPage() {
           missingPPE: ['helmet', 'vest']
         });
       }
-      showToast(`📢 Sector Directive Dispatched: "${msgToSend}"`);
+      showToast(`📢 Zone Directive Dispatched: "${msgToSend}"`);
       if (!customMsg) setBroadcastText('');
     } catch (err) {
-      showToast('Broadcast dispatched to sector channel.');
+      showToast('Broadcast dispatched to zone channel.');
       if (!customMsg) setBroadcastText('');
     } finally {
       setIsBroadcasting(false);
     }
   };
 
-  // Acknowledge single violation
+  // Acknowledge single violation (transitions OPEN -> ACKNOWLEDGED)
   const handleAcknowledgeViolation = async (violationId) => {
     try {
       await api.patch(`/detections/${violationId}/review`, {
-        reviewStatus: 'APPROVED',
-        reviewNotes: `Floor Marshall (${user?.name || 'Supervisor'}) confirmed on-floor PPE rectification.`
+        action: 'ACKNOWLEDGE',
+        reviewerNotes: `Zone Supervisor (${user?.name || 'Supervisor'}) acknowledged on-floor PPE notification.`
       });
-      showToast('Violation acknowledged and closed.');
+      showToast('Safety Incident acknowledged. Lifecycle Status updated to ACKNOWLEDGED.');
       fetchSupervisorData();
     } catch (err) {
-      showToast('Review status updated.');
-      setData(prev => ({
-        ...prev,
-        recentViolations: prev.recentViolations.filter(v => v._id !== violationId),
-        unacknowledgedViolations: Math.max(0, prev.unacknowledgedViolations - 1)
-      }));
+      const errMsg = err.response?.data?.message || 'Failed to acknowledge incident.';
+      showToast(errMsg, true);
     }
   };
 
   const handleShiftSignoff = () => {
     setShiftSigned(true);
-    showToast(`✅ EHS Shift Marshall Handover Logged for ${user?.name || 'Supervisor'}!`);
+    showToast(`✅ EHS Shift Handover Logged for Zone Supervisor ${user?.name || 'Supervisor'}!`);
   };
 
   return (
@@ -187,7 +184,7 @@ export default function SupervisorDashboardPage() {
       )}
 
       {/* ========================================================
-          SHOP-FLOOR SECTOR BANNER (Clear Visual Showcase)
+          SHOP-FLOOR ZONE BANNER (Clear Visual Showcase)
           ======================================================== */}
       <div className="rounded-3xl border border-emerald-100 bg-white p-6 sm:p-8 shadow-xl relative overflow-hidden">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
@@ -197,36 +194,36 @@ export default function SupervisorDashboardPage() {
             <div className="flex flex-wrap items-center gap-2">
               <span className="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold font-mono flex items-center gap-1.5">
                 <MapPin className="w-3.5 h-3.5 text-emerald-600" />
-                ASSIGNED SECTOR: {data.zoneName || 'Heavy Assembly Bay 01'}
+                ASSIGNED SAFETY ZONE: {data.zoneName || 'Heavy Assembly Zone 01'}
               </span>
               <span className="px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold font-mono">
-                MARSHAL: {user?.name || 'On Duty'}
+                ZONE SUPERVISOR: {user?.name || 'On Duty'}
               </span>
             </div>
 
             <div>
               <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-                Sector Safety Terminal & Floor Dispatch
+                Safety Zone Terminal & Floor Dispatch
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 mt-1 leading-relaxed">
-                Ground-level PPE enforcement station. Live AI camera inspection, automated emergency siren control, and instant worker hazard directives.
+                Ground-level PPE enforcement station. Live AI camera inspection, Floor Buzzer controls, and instant worker hazard directives.
               </p>
             </div>
 
-            {/* Quick Sector Safety Fact */}
+            {/* Quick Zone Safety Fact */}
             <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping"></span>
                 <span className="font-bold text-slate-800">
-                  Sector Compliance: <span className="text-emerald-600 font-black text-sm">{data.complianceRate}%</span>
+                  Zone Compliance: <span className="text-emerald-600 font-black text-sm">{data.complianceRate}%</span>
                 </span>
                 <span className="text-slate-400">|</span>
                 <span className="text-slate-600 font-semibold font-mono">
-                  {data.unacknowledgedViolations === 0 ? '🟢 All Workers Safe' : `🚨 ${data.unacknowledgedViolations} Violations Active`}
+                  {data.unacknowledgedViolations === 0 ? '🟢 All Workers Safe' : `🚨 ${data.unacknowledgedViolations} PPE Violations Active`}
                 </span>
               </div>
               <div className="text-[11px] font-mono text-emerald-700 font-bold bg-emerald-100/70 px-2 py-0.5 rounded">
-                Siren: {data.buzzerEnabled ? 'ARMED (105 dB)' : 'MUTED'}
+                Floor Buzzer: {data.buzzerEnabled ? 'ARMED (105 dB)' : 'MUTED'}
               </div>
             </div>
 
@@ -237,7 +234,7 @@ export default function SupervisorDashboardPage() {
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-lg shadow-emerald-600/25 transition cursor-pointer"
               >
                 <Camera className="w-4 h-4" />
-                <span>Sector AI Live Feed</span>
+                <span>Zone AI Live Feed</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </Link>
               <Link
@@ -263,7 +260,7 @@ export default function SupervisorDashboardPage() {
             <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-200 shadow-xl aspect-video lg:aspect-[4/3] bg-slate-900">
               <img 
                 src="/images/ppe_engineer_bg.jpg" 
-                alt="PPE Safety Marshal Inspection"
+                alt="PPE Safety Inspection"
                 className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" 
               />
               {/* Overlay Tags */}
@@ -272,17 +269,17 @@ export default function SupervisorDashboardPage() {
                 <span>ZONE AI INSPECTION ACTIVE</span>
               </div>
               <div className="absolute bottom-0 inset-x-0 p-3 bg-gradient-to-t from-slate-950/90 via-slate-950/60 to-transparent text-white">
-                <p className="text-xs font-bold leading-tight">Floor Compliance Marshal Posted</p>
+                <p className="text-xs font-bold leading-tight">Zone Supervisor Posted</p>
                 <p className="text-[10px] text-emerald-300">Continuous Hard Hat & High-Vis Vest Verification</p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Sector Marshall Details Strip */}
+        {/* Zone Supervisor Details Strip */}
         <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-            <span className="text-[10px] text-slate-500 uppercase block font-mono">Floor Marshall</span>
+            <span className="text-[10px] text-slate-500 uppercase block font-mono">Zone Supervisor</span>
             <span className="text-slate-900 font-bold text-sm truncate block">{user?.name || data.supervisor?.name || 'On Duty'}</span>
           </div>
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
@@ -290,7 +287,7 @@ export default function SupervisorDashboardPage() {
             <span className="text-amber-600 font-bold text-sm truncate block">{data.supervisor?.shift || 'Morning Shift'}</span>
           </div>
           <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-            <span className="text-[10px] text-slate-500 uppercase block font-mono">Floor Siren Relay</span>
+            <span className="text-[10px] text-slate-500 uppercase block font-mono">Floor Buzzer Relay</span>
             <span className="text-emerald-600 font-bold text-sm truncate block">
               {data.buzzerEnabled ? 'ARMED (105 dB)' : 'DISABLED'}
             </span>
@@ -304,7 +301,7 @@ export default function SupervisorDashboardPage() {
         </div>
       </div>
 
-      {/* RUGGED FLOOR SIREN & HOOTER CONTROL STATION */}
+      {/* FLOOR BUZZER CONTROL STATION */}
       <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl relative overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2.5">
@@ -313,9 +310,9 @@ export default function SupervisorDashboardPage() {
             </div>
             <div>
               <h2 className="font-bold text-white text-base tracking-wide">
-                Floor Buzzer & Emergency Siren Station
+                Floor Buzzer Control Station
               </h2>
-              <p className="text-xs text-slate-400">Direct hardware siren sounder for shop-floor compliance warnings</p>
+              <p className="text-xs text-slate-400">Direct Floor Buzzer trigger for shop-floor compliance warnings</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -337,7 +334,7 @@ export default function SupervisorDashboardPage() {
             }`}
           >
             <Volume2 className="w-6 h-6" />
-            <span>{sirenPlaying ? 'SIREN SOUNDING (ACTIVE)' : '🚨 TRIGGER FLOOR SIREN'}</span>
+            <span>{sirenPlaying ? 'BUZZER ACTIVE' : '🚨 TRIGGER FLOOR BUZZER'}</span>
             <span className="text-[10px] font-normal text-red-300/80 font-mono">High-Pitch Continuous Warning</span>
           </button>
 
@@ -347,7 +344,7 @@ export default function SupervisorDashboardPage() {
             className="p-4 rounded-xl bg-amber-950/60 hover:bg-amber-900 text-amber-200 border border-amber-800 font-bold text-sm flex flex-col items-center justify-center gap-2 transition cursor-pointer shadow-lg"
           >
             <Zap className="w-6 h-6" />
-            <span>⚡ SOUND WARNING HORN</span>
+            <span>⚡ SOUND WARNING BUZZER</span>
             <span className="text-[10px] font-normal text-amber-300/80 font-mono">Dual-Tone Attention Blast</span>
           </button>
 
@@ -356,18 +353,18 @@ export default function SupervisorDashboardPage() {
             className="p-4 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-200 border border-slate-700 font-bold text-sm flex flex-col items-center justify-center gap-2 transition cursor-pointer shadow-lg"
           >
             <VolumeX className="w-6 h-6 text-amber-400" />
-            <span>🔕 MUTE / SILENCE HOOTER</span>
+            <span>🔕 MUTE / SILENCE FLOOR BUZZER</span>
             <span className="text-[10px] font-normal text-slate-400 font-mono">Halt Audio & Clear Relay</span>
           </button>
         </div>
       </div>
 
-      {/* SECTOR KPI METRICS STRIP */}
+      {/* ZONE KPI METRICS STRIP */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Compliance Rate */}
         <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl flex flex-col justify-between">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Sector Compliance</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider">Zone Compliance</span>
             <div className="p-2 rounded-xl bg-emerald-950 border border-emerald-800 text-emerald-400">
               <ShieldCheck className="w-4 h-4" />
             </div>
@@ -383,7 +380,7 @@ export default function SupervisorDashboardPage() {
         {/* Monitored Cameras */}
         <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl flex flex-col justify-between">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Sector Cameras</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider">Zone Cameras</span>
             <div className="p-2 rounded-xl bg-sky-950 border border-sky-800 text-sky-400">
               <Camera className="w-4 h-4" />
             </div>
@@ -402,7 +399,7 @@ export default function SupervisorDashboardPage() {
         {/* Active Violations */}
         <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl flex flex-col justify-between">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Sector Breaches</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider">Zone PPE Violations</span>
             <div className="p-2 rounded-xl bg-rose-950 border border-rose-800 text-rose-400">
               <AlertTriangle className="w-4 h-4" />
             </div>
@@ -446,9 +443,9 @@ export default function SupervisorDashboardPage() {
             <div>
               <h3 className="font-bold text-white text-sm flex items-center gap-2">
                 <HardHat className="w-4 h-4 text-amber-400" />
-                Sector Mandatory PPE Standards
+                Zone Mandatory PPE Standards
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">OSHA / ISO 45001 gear requirements enforced in this bay</p>
+              <p className="text-xs text-slate-400 mt-0.5">OSHA / ISO 45001 gear requirements enforced in this zone</p>
             </div>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800">
               ENFORCEMENT: 100%
@@ -489,7 +486,7 @@ export default function SupervisorDashboardPage() {
                   <Megaphone className="w-4 h-4 text-sky-400" />
                   Floor Intercom & WhatsApp Dispatch
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Broadcast instant safety notifications to floor workers & marshals</p>
+                <p className="text-xs text-slate-400 mt-0.5">Broadcast instant safety notifications to floor workers & supervisors</p>
               </div>
             </div>
 
@@ -533,7 +530,7 @@ export default function SupervisorDashboardPage() {
                   type="text"
                   value={broadcastText}
                   onChange={(e) => setBroadcastText(e.target.value)}
-                  placeholder="Enter directive for sector marshals..."
+                  placeholder="Enter directive for zone workers..."
                   className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-500"
                 />
                 <button
@@ -569,13 +566,13 @@ export default function SupervisorDashboardPage() {
         </div>
       </div>
 
-      {/* SECTOR VIOLATIONS QUEUE WITH 1-CLICK ACKNOWLEDGE */}
+      {/* ZONE PPE VIOLATIONS QUEUE WITH 1-CLICK ACKNOWLEDGE */}
       <div className="p-5 sm:p-6 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl space-y-4">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div>
             <h3 className="font-bold text-white text-base flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-rose-400" />
-              Sector Active Infractions Queue
+              Zone Active PPE Violations Queue
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
               Review and acknowledge worker PPE non-compliance detections in real time
@@ -589,49 +586,78 @@ export default function SupervisorDashboardPage() {
         {data.recentViolations.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-xs">
             <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-500/50" />
-            Zero active infractions in this sector. All workers compliant with PPE requirements.
+            Zero active PPE violations in this zone. All workers compliant with PPE requirements.
           </div>
         ) : (
           <div className="space-y-3">
-            {data.recentViolations.map((v) => (
-              <div
-                key={v._id}
-                className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-100">{v.zoneName || data.zoneName}</span>
-                    <span className="px-2 py-0.5 rounded bg-rose-950 border border-rose-800 text-rose-300 font-bold text-[10px]">
-                      Missing: {v.missingPPE?.join(', ') || 'Mandatory PPE'}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-400 mt-1">
-                    Detected Gear: <span className="text-slate-300">{v.detectedClasses?.map(c => c.name || c.class).join(', ') || 'Worker Body'}</span>
-                    <span className="text-slate-600 mx-2">•</span>
-                    <span className="font-mono text-slate-500">
-                      {v.createdAt ? new Date(v.createdAt).toLocaleTimeString() : 'Just now'}
-                    </span>
-                  </div>
-                </div>
+            {data.recentViolations.map((v) => {
+              const canonicalState = getIncidentCanonicalState(v);
+              const badge = getIncidentStatusBadge(v);
+              const isResolved = canonicalState === 'RESOLVED';
+              const isAcknowledged = canonicalState === 'ACKNOWLEDGED';
+              const isOpen = canonicalState === 'OPEN';
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleAcknowledgeViolation(v._id)}
-                    className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow transition cursor-pointer"
-                  >
-                    <CheckCircle className="w-3.5 h-3.5" />
-                    <span>Acknowledge & Rectify</span>
-                  </button>
-                  <button
-                    onClick={() => handleTriggerSiren('siren')}
-                    className="p-1.5 rounded-lg bg-red-950 hover:bg-red-900 border border-red-800 text-red-300 transition cursor-pointer"
-                    title="Sound Buzzer for this violation"
-                  >
-                    <Volume2 className="w-4 h-4" />
-                  </button>
+              return (
+                <div
+                  key={v._id}
+                  className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-100">{v.zoneName || data.zoneName}</span>
+                      <span className="px-2 py-0.5 rounded bg-rose-950 border border-rose-800 text-rose-300 font-bold text-[10px]">
+                        Missing: {v.missingPPE?.join(', ') || 'Mandatory PPE'}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${badge.badgeClass}`}>
+                        {badge.label} {badge.subLabel ? `(${badge.subLabel})` : ''}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-1">
+                      Detected Gear: <span className="text-slate-300">{v.detectedClasses?.map(c => c.name || c.class).join(', ') || 'Worker Body'}</span>
+                      <span className="text-slate-600 mx-2">•</span>
+                      <span className="font-mono text-slate-500">
+                        {v.createdAt ? new Date(v.createdAt).toLocaleTimeString() : 'Just now'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {isOpen && (
+                      <button
+                        onClick={() => handleAcknowledgeViolation(v._id)}
+                        className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow transition cursor-pointer"
+                        title="Acknowledge PPE violation"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>Acknowledge</span>
+                      </button>
+                    )}
+                    {isAcknowledged && (
+                      <Link
+                        to="/supervisor/violations"
+                        className="px-3.5 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white font-semibold text-xs flex items-center gap-1.5 shadow transition cursor-pointer"
+                        title="Proceed to detailed ledger to resolve safety incident"
+                      >
+                        <span>Resolve in Ledger</span>
+                      </Link>
+                    )}
+                    {isResolved && (
+                      <span className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 text-xs font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Resolved</span>
+                      </span>
+                    )}
+                    <button
+                      onClick={() => handleTriggerSiren('siren')}
+                      className="p-1.5 rounded-lg bg-red-950 hover:bg-red-900 border border-red-800 text-red-300 transition cursor-pointer"
+                      title="Trigger Floor Buzzer for this violation"
+                    >
+                      <Volume2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

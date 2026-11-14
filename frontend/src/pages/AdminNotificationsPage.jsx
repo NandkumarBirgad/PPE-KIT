@@ -123,7 +123,7 @@ export default function AdminNotificationsPage() {
             <table className="w-full text-left text-xs text-slate-300">
               <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
                 <tr>
-                  <th className="p-3.5">Zone & Sector</th>
+                  <th className="p-3.5">Safety Zone</th>
                   <th className="p-3.5">Assigned Supervisor</th>
                   <th className="p-3.5">Missing PPE Item</th>
                   <th className="p-3.5">Dispatch Channel</th>

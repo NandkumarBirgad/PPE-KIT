@@ -16,7 +16,7 @@ if Config.CLOUDINARY_CLOUD_NAME and Config.CLOUDINARY_API_KEY and Config.CLOUDIN
         secure=True
     )
     _cloudinary_enabled = True
-    print(f"[Cloudinary] Storage Connected! Cloud Name: {Config.CLOUDINARY_CLOUD_NAME}")
+    print("[Cloudinary] Cloud Storage Provider Connected!")
 else:
     _cloudinary_enabled = False
     print("[Cloudinary] Credentials not configured. Using local disk storage.")

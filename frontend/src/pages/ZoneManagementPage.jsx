@@ -658,7 +658,7 @@ export default function ZoneManagementPage() {
                       rows={2}
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
-                      placeholder="Facility sector details, overhead hazards, machinery present..."
+                      placeholder="Facility zone details, overhead hazards, machinery present..."
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
                     />
                   </div>

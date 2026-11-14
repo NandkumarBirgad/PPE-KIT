@@ -41,6 +41,25 @@ mem_zones = []
 mem_detections = []
 mem_notifications = []
 mem_cameras = []
+mem_settings = {}
+
+DEFAULT_SYSTEM_SETTINGS = {
+    "_id": "global_settings",
+    "factory_name": "Antigravity PPE Monitoring Facility",
+    "default_required_ppe": ["helmet", "vest", "boots"],
+    "confidence_threshold": 0.35,
+    "violation_confirmation_duration_sec": 3.0,
+    "incident_auto_resolution_duration_sec": 2.0,
+    "video_sampling_interval_ms": 1000,
+    "alert_cooldown_sec": 5,
+    "floor_buzzer_enabled": True,
+    "sound_enabled": True,
+    "camera_warning_timeout_sec": 5.0,
+    "camera_offline_timeout_sec": 15.0,
+    "camera_degraded_failures": 3,
+    "updated_at": None,
+    "updated_by": None
+}
 
 def init_db():
     global db_client, db_instance
@@ -190,6 +209,30 @@ def seed_defaults():
             "buzzerSound": "beep",
             "active": True,
             "created_at": datetime.datetime.now(datetime.timezone.utc)
+        },
+        {
+            "_id": "zone_welding",
+            "name": "Welding & Cutting Bay",
+            "code": "WELD-04",
+            "description": "High-temperature arc welding, torch cutting, and grinding zone. Intense UV flash, spatter, and sharp metal hazards.",
+            "requiredPPE": ["helmet", "vest", "boots", "goggles"],
+            "supervisor": {
+                "name": "Anil Sharma",
+                "email": "anil.sharma@ppe.com",
+                "phone": "+91 98233 77889",
+                "alertChannel": "WhatsApp & SMS",
+                "shift": "General (08:30 - 17:30)"
+            },
+            "cameraFeed": {
+                "name": "Welding Bay HD Cam 04",
+                "sourceType": "webcam",
+                "streamUrl": "rtsp://192.168.1.104/live",
+                "deviceId": "cam_04"
+            },
+            "buzzerEnabled": True,
+            "buzzerSound": "siren",
+            "active": True,
+            "created_at": datetime.datetime.now(datetime.timezone.utc)
         }
     ]
 
@@ -287,6 +330,11 @@ def seed_defaults():
             if cams_col.count_documents({}) == 0:
                 cams_col.insert_many(default_cameras)
                 print("✅ Seeded 4 default CCTV cameras in MongoDB")
+
+            settings_col = db_instance["settings"]
+            if settings_col.count_documents({"_id": "global_settings"}) == 0:
+                settings_col.insert_one(dict(DEFAULT_SYSTEM_SETTINGS))
+                print("✅ Seeded default global system settings in MongoDB")
         except Exception as e:
             print(f"⚠️ Seeding warning: {e}")
     else:
@@ -317,6 +365,9 @@ def seed_defaults():
 
         if len(mem_cameras) == 0:
             mem_cameras.extend(default_cameras)
+
+        if not mem_settings:
+            mem_settings.update(dict(DEFAULT_SYSTEM_SETTINGS))
 
         # Seed realistic default detections / violations with Worker and Location info
         default_detections = [
@@ -434,4 +485,50 @@ def get_cameras_col():
     if is_mongo_connected and db_instance is not None:
         return db_instance["cameras"]
     return None
+
+def get_settings_col():
+    if is_mongo_connected and db_instance is not None:
+        return db_instance["settings"]
+    return None
+
+def get_system_settings():
+    """
+    Returns authoritative system settings merged with defaults.
+    """
+    base = dict(DEFAULT_SYSTEM_SETTINGS)
+    if is_mongo_connected and db_instance is not None:
+        try:
+            col = db_instance["settings"]
+            doc = col.find_one({"_id": "global_settings"})
+            if doc:
+                base.update(doc)
+                return base
+        except Exception:
+            pass
+    if mem_settings:
+        base.update(mem_settings)
+    return base
+
+def update_system_settings(data: dict):
+    """
+    Persists system settings updates to MongoDB and in-memory store.
+    """
+    current = get_system_settings()
+    for k, v in data.items():
+        if k != "_id":
+            current[k] = v
+    current["_id"] = "global_settings"
+    current["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    if is_mongo_connected and db_instance is not None:
+        try:
+            col = db_instance["settings"]
+            col.update_one({"_id": "global_settings"}, {"$set": current}, upsert=True)
+        except Exception as e:
+            print(f"⚠️ Failed to persist settings to MongoDB: {e}")
+            raise e
+
+    mem_settings.clear()
+    mem_settings.update(current)
+    return current
 

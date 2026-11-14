@@ -1,3 +1,4 @@
+import datetime
 from flask import Blueprint, jsonify, request
 from database import (
     is_mongo_connected, 
@@ -11,15 +12,20 @@ from database import (
     mem_users
 )
 from auth import token_required
+from ai_engine.camera_health import evaluate_camera_health
 
 dashboard_bp = Blueprint("dashboard_bp", __name__)
 
 @dashboard_bp.route("/api/dashboard/summary", methods=["GET"])
 def get_summary():
     # Camera Stats
-    total_cameras = len(mem_cameras)
-    online_cameras = sum(1 for c in mem_cameras if c.get("status") == "ONLINE")
-    offline_cameras = total_cameras - online_cameras
+    evaluated_cams = [evaluate_camera_health(c) for c in mem_cameras]
+    total_cameras = len(evaluated_cams)
+    online_cameras = sum(1 for c in evaluated_cams if c.get("status") == "ONLINE")
+    warning_cameras = sum(1 for c in evaluated_cams if c.get("status") == "WARNING")
+    degraded_cameras = sum(1 for c in evaluated_cams if c.get("status") == "DEGRADED")
+    completed_cameras = sum(1 for c in evaluated_cams if c.get("status") == "COMPLETED")
+    offline_cameras = sum(1 for c in evaluated_cams if c.get("status") == "OFFLINE")
 
     # Zone & Supervisor Stats
     total_zones = len(mem_zones)
@@ -35,9 +41,13 @@ def get_summary():
             u_col = get_users_col()
 
             if c_col is not None:
-                total_cameras = c_col.count_documents({})
-                online_cameras = c_col.count_documents({"status": "ONLINE"})
-                offline_cameras = total_cameras - online_cameras
+                db_cams = [evaluate_camera_health(c) for c in c_col.find({})]
+                total_cameras = len(db_cams)
+                online_cameras = sum(1 for c in db_cams if c.get("status") == "ONLINE")
+                warning_cameras = sum(1 for c in db_cams if c.get("status") == "WARNING")
+                degraded_cameras = sum(1 for c in db_cams if c.get("status") == "DEGRADED")
+                completed_cameras = sum(1 for c in db_cams if c.get("status") == "COMPLETED")
+                offline_cameras = sum(1 for c in db_cams if c.get("status") == "OFFLINE")
 
             if z_col is not None:
                 total_zones = z_col.count_documents({"active": True})
@@ -71,6 +81,9 @@ def get_summary():
                 "monitoredPersons": monitored_persons,
                 "totalCameras": total_cameras,
                 "onlineCameras": online_cameras,
+                "warningCameras": warning_cameras,
+                "degradedCameras": degraded_cameras,
+                "completedCameras": completed_cameras,
                 "offlineCameras": offline_cameras,
                 "totalZones": total_zones,
                 "activeSupervisors": active_supervisors
@@ -99,6 +112,9 @@ def get_summary():
         "monitoredPersons": monitored_persons,
         "totalCameras": total_cameras,
         "onlineCameras": online_cameras,
+        "warningCameras": warning_cameras,
+        "degradedCameras": degraded_cameras,
+        "completedCameras": completed_cameras,
         "offlineCameras": offline_cameras,
         "totalZones": total_zones,
         "activeSupervisors": active_supervisors
@@ -131,7 +147,15 @@ def get_supervisor_summary():
     zone_name = zone.get("name", "Assigned Safety Zone") if zone else "Facility Zone"
 
     # Zone cameras
-    zone_cameras = [c for c in mem_cameras if str(c.get("zoneId")) == str(zone.get("_id")) or c.get("zoneName") == zone_name] if zone else []
+    raw_cams = mem_cameras
+    if is_mongo_connected:
+        try:
+            c_col = get_cameras_col()
+            if c_col is not None:
+                raw_cams = list(c_col.find({}))
+        except Exception:
+            pass
+    zone_cameras = [evaluate_camera_health(c) for c in raw_cams if str(c.get("zoneId")) == str(zone.get("_id")) or c.get("zoneName") == zone_name] if zone else []
     total_cameras = len(zone_cameras)
     online_cameras = sum(1 for c in zone_cameras if c.get("status") == "ONLINE")
 

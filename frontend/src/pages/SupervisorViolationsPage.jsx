@@ -14,6 +14,16 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import AuthenticatedImage from '../components/AuthenticatedImage';
+import {
+  CANONICAL_STATES,
+  getIncidentCanonicalState,
+  getIncidentResolutionType,
+  getResolutionTypeLabel,
+  getIncidentStatusBadge,
+  mapCanonicalFilterToApi,
+  validateLifecycleAction
+} from '../services/incidentLifecycle';
 
 export default function SupervisorViolationsPage() {
   const { user } = useAuth();
@@ -24,15 +34,21 @@ export default function SupervisorViolationsPage() {
   const [selectedViolation, setSelectedViolation] = useState(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
+  const [validationError, setValidationError] = useState('');
   const [toastMessage, setToastMessage] = useState('');
 
   const fetchViolations = async () => {
     setLoading(true);
     try {
       const zoneQuery = user?.assignedZoneName ? `&search=${encodeURIComponent(user.assignedZoneName)}` : '';
-      const filterParam = reviewFilter ? `&reviewStatus=${reviewFilter}` : '';
+      const apiFilter = mapCanonicalFilterToApi(reviewFilter);
+      const filterParam = apiFilter.status ? `&status=${encodeURIComponent(apiFilter.status)}` : '';
       const res = await api.get(`/detections?complianceStatus=VIOLATION${zoneQuery}${filterParam}`);
-      setViolations(res.data?.events || []);
+      let events = res.data?.events || [];
+      if (reviewFilter) {
+        events = events.filter(e => getIncidentCanonicalState(e) === reviewFilter);
+      }
+      setViolations(events);
     } catch (err) {
       console.error('Fetch violations error:', err);
     } finally {
@@ -46,23 +62,48 @@ export default function SupervisorViolationsPage() {
 
   const handleOpenReviewModal = (v) => {
     setSelectedViolation(v);
-    setReviewNotes(v.reviewerNotes || `Reviewed by Zone Supervisor ${user?.name || ''}`);
+    setValidationError('');
+    setReviewNotes(v.reviewerNotes || v.resolution_reason || '');
   };
 
-  const handleSaveReview = async (newStatus) => {
+  const handleLifecycleAction = async (action) => {
     if (!selectedViolation) return;
+    setValidationError('');
+    const validation = validateLifecycleAction(action, reviewNotes);
+    if (!validation.valid) {
+      setValidationError(validation.error);
+      return;
+    }
+
     setSubmittingReview(true);
     try {
-      await api.patch(`/detections/${selectedViolation._id}/review`, {
-        reviewStatus: newStatus,
-        reviewerNotes: reviewNotes.trim(),
-      });
-      setToastMessage(`Incident review updated to ${newStatus}`);
+      const payload = { action };
+      const trimmedNotes = reviewNotes.trim();
+      if (action === 'ACKNOWLEDGE') {
+        if (trimmedNotes) {
+          payload.reviewerNotes = trimmedNotes;
+          payload.reason = trimmedNotes;
+        }
+      } else if (action === 'RESOLVE' || action === 'FALSE_POSITIVE') {
+        payload.reason = trimmedNotes;
+        if (action === 'FALSE_POSITIVE') {
+          payload.resolution_type = 'FALSE_POSITIVE';
+        }
+      }
+
+      await api.patch(`/detections/${selectedViolation._id}/review`, payload);
+      const actionLabel = action === 'ACKNOWLEDGE'
+        ? 'acknowledged (Status: ACKNOWLEDGED)'
+        : (action === 'FALSE_POSITIVE' ? 'marked as false positive (Status: RESOLVED)' : 'resolved (Status: RESOLVED)');
+      setToastMessage(`Incident successfully ${actionLabel}.`);
       setSelectedViolation(null);
+      setReviewNotes('');
       fetchViolations();
       setTimeout(() => setToastMessage(''), 4000);
     } catch (err) {
-      console.error('Review update error:', err);
+      console.error('Lifecycle mutation error:', err);
+      const errMsg = err.response?.data?.message || 'Failed to update incident lifecycle state.';
+      setValidationError(errMsg);
     } finally {
       setSubmittingReview(false);
     }
@@ -93,7 +134,7 @@ export default function SupervisorViolationsPage() {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Review, acknowledge, and resolve workplace PPE safety breaches detected in your sector
+            Review, acknowledge, and resolve workplace PPE violations and safety incidents in your zone
           </p>
         </div>
 
@@ -126,10 +167,10 @@ export default function SupervisorViolationsPage() {
             onChange={(e) => setReviewFilter(e.target.value)}
             className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
           >
-            <option value="">All Review Statuses</option>
-            <option value="PENDING">Pending Review</option>
-            <option value="APPROVED">Acknowledged / Approved</option>
-            <option value="REJECTED">False Positive / Rejected</option>
+            <option value="">All Lifecycle Statuses</option>
+            <option value="OPEN">Open Incidents</option>
+            <option value="ACKNOWLEDGED">Acknowledged Incidents</option>
+            <option value="RESOLVED">Resolved Incidents</option>
           </select>
         </div>
       </div>
@@ -139,12 +180,12 @@ export default function SupervisorViolationsPage() {
         {loading ? (
           <div className="py-16 text-center text-slate-400 text-xs">
             <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-            Loading sector violations...
+            Loading zone PPE violations...
           </div>
         ) : violations.length === 0 ? (
           <div className="py-16 text-center text-slate-500 text-xs">
             <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-emerald-500/50" />
-            No safety violations found for your sector.
+            No PPE violations found for your zone.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -155,7 +196,7 @@ export default function SupervisorViolationsPage() {
                   <th className="p-3.5">Zone & Location</th>
                   <th className="p-3.5">Camera Feed</th>
                   <th className="p-3.5">Missing PPE Equipment</th>
-                  <th className="p-3.5">Review Status</th>
+                  <th className="p-3.5">Lifecycle Status</th>
                   <th className="p-3.5">Timestamp</th>
                   <th className="p-3.5 text-right">Action</th>
                 </tr>
@@ -184,15 +225,14 @@ export default function SupervisorViolationsPage() {
                       </span>
                     </td>
                     <td className="p-3.5">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                        v.reviewStatus === 'APPROVED'
-                          ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                          : v.reviewStatus === 'REJECTED'
-                          ? 'bg-slate-800 text-slate-400'
-                          : 'bg-amber-950 text-amber-300 border border-amber-800'
-                      }`}>
-                        {v.reviewStatus || 'PENDING'}
-                      </span>
+                      {(() => {
+                        const badge = getIncidentStatusBadge(v);
+                        return (
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${badge.badgeClass}`}>
+                            {badge.label} {badge.subLabel ? `(${badge.subLabel})` : ''}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="p-3.5 font-mono text-[11px] text-slate-400">
                       {v.createdAt ? new Date(v.createdAt).toLocaleString() : 'Just now'}
@@ -202,7 +242,7 @@ export default function SupervisorViolationsPage() {
                         onClick={() => handleOpenReviewModal(v)}
                         className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 text-xs font-semibold border border-slate-700 transition cursor-pointer"
                       >
-                        Review
+                        Inspect & Review
                       </button>
                     </td>
                   </tr>
@@ -214,101 +254,162 @@ export default function SupervisorViolationsPage() {
       </div>
 
       {/* Review Modal */}
-      {selectedViolation && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-rose-400" />
-                Review Safety Incident Details
-              </h3>
-              <button
-                onClick={() => setSelectedViolation(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {selectedViolation && (() => {
+        const canonicalState = getIncidentCanonicalState(selectedViolation);
+        const resType = getIncidentResolutionType(selectedViolation);
+        const isResolved = canonicalState === 'RESOLVED';
+        const isAcknowledged = canonicalState === 'ACKNOWLEDGED';
+        const isOpen = canonicalState === 'OPEN';
 
-            <div className="p-6 space-y-4 text-xs">
-              {selectedViolation.evidenceImageReference && (
-                <div className="aspect-video rounded-xl overflow-hidden bg-black border border-slate-800">
-                  <img
-                    src={selectedViolation.evidenceImageReference}
-                    alt="Violation Evidence"
-                    className="w-full h-full object-contain"
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+            <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
+              <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                  Review Safety Incident Details
+                </h3>
+                <button
+                  onClick={() => setSelectedViolation(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4 text-xs">
+                {selectedViolation.evidenceImageReference && (
+                  <div className="aspect-video rounded-xl overflow-hidden bg-black border border-slate-800">
+                    <AuthenticatedImage
+                      src={selectedViolation.evidenceImageReference}
+                      alt="Violation Evidence"
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+                      👤 Worker Identity
+                    </span>
+                    <div className="font-bold text-amber-300">
+                      {selectedViolation.workerTag || selectedViolation.personId || 'Worker #1'}
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
+                      📍 Zone & Location
+                    </span>
+                    <div className="font-bold text-white">
+                      {selectedViolation.zoneName}
+                    </div>
+                    <span className="text-[10px] text-slate-400 block">
+                      {selectedViolation.location || selectedViolation.cameraName}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Current Lifecycle Status Banner */}
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                  <div>
+                    <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">
+                      Current Lifecycle Status
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        isOpen ? 'bg-amber-950 text-amber-300 border border-amber-800'
+                        : isAcknowledged ? 'bg-sky-950 text-sky-300 border border-sky-800'
+                        : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                      }`}>
+                        {canonicalState}
+                      </span>
+                      {isResolved && resType && (
+                        <span className="text-[11px] text-slate-400">
+                          via <b className="text-slate-200">{getResolutionTypeLabel(resType)}</b>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {selectedViolation.resolved_at && (
+                    <span className="text-[10px] font-mono text-slate-500">
+                      {new Date(selectedViolation.resolved_at).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+
+                {validationError && (
+                  <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-200 text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>{validationError}</span>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {isResolved ? 'Recorded Resolution Reason / Notes' : 'Zone Supervisor Notes & Mandatory Resolution Reason'}
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={reviewNotes}
+                    onChange={(e) => {
+                      setReviewNotes(e.target.value);
+                      if (validationError) setValidationError('');
+                    }}
+                    disabled={isResolved || submittingReview}
+                    placeholder={isResolved ? 'No notes recorded.' : 'Enter resolution details or acknowledgement notes (mandatory for Resolve / False Positive)...'}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
                   />
                 </div>
-              )}
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-                  <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
-                    👤 Worker Identity
-                  </span>
-                  <div className="font-bold text-amber-300">
-                    {selectedViolation.workerTag || selectedViolation.personId || 'Worker #1'}
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
-                  <span className="text-slate-400 text-[10px] uppercase font-bold block mb-1">
-                    📍 Zone & Location
-                  </span>
-                  <div className="font-bold text-white">
-                    {selectedViolation.zoneName}
-                  </div>
-                  <span className="text-[10px] text-slate-400 block">
-                    {selectedViolation.location || selectedViolation.cameraName}
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Supervisor Notes / Corrective Actions Taken
-                </label>
-                <textarea
-                  rows={3}
-                  value={reviewNotes}
-                  onChange={(e) => setReviewNotes(e.target.value)}
-                  placeholder="e.g. Worker instructed to wear helmet immediately. Incident resolved."
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedViolation(null)}
-                  className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
-                >
-                  Cancel
-                </button>
-
-                <div className="flex gap-2">
+                <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
                   <button
                     type="button"
-                    disabled={submittingReview}
-                    onClick={() => handleSaveReview('REJECTED')}
-                    className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700"
+                    onClick={() => setSelectedViolation(null)}
+                    className="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
                   >
-                    Mark False Positive
+                    {isResolved ? 'Close' : 'Cancel'}
                   </button>
-                  <button
-                    type="button"
-                    disabled={submittingReview}
-                    onClick={() => handleSaveReview('APPROVED')}
-                    className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30"
-                  >
-                    Acknowledge & Close
-                  </button>
+
+                  {!isResolved && (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={submittingReview}
+                        onClick={() => handleLifecycleAction('FALSE_POSITIVE')}
+                        className="px-3 py-2 rounded-lg bg-amber-950/80 hover:bg-amber-900 border border-amber-800 text-amber-200 text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+                      >
+                        Mark False Positive
+                      </button>
+
+                      {isOpen && (
+                        <button
+                          type="button"
+                          disabled={submittingReview}
+                          onClick={() => handleLifecycleAction('ACKNOWLEDGE')}
+                          className="px-3.5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow transition cursor-pointer disabled:opacity-50"
+                        >
+                          Acknowledge
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        disabled={submittingReview}
+                        onClick={() => handleLifecycleAction('RESOLVE')}
+                        className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 transition cursor-pointer disabled:opacity-50"
+                      >
+                        Resolve
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

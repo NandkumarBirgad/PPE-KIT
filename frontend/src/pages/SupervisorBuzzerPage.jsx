@@ -53,7 +53,7 @@ export default function SupervisorBuzzerPage() {
       await api.patch(`/zones/${zone._id}`, {
         buzzerEnabled: !zone.buzzerEnabled,
       });
-      showToast(`Sector floor buzzer is now ${!zone.buzzerEnabled ? 'ARMED' : 'MUTED'}.`);
+      showToast(`Zone Floor Buzzer is now ${!zone.buzzerEnabled ? 'ARMED' : 'MUTED'}.`);
       fetchZoneData();
     } catch (err) {
       console.error('Toggle error:', err);
@@ -72,7 +72,7 @@ export default function SupervisorBuzzerPage() {
       if (zone?._id) {
         await api.post(`/zones/${zone._id}/trigger-buzzer`, { isTest: true });
       }
-      showToast(`🚨 Emergency ${type.toUpperCase()} sounded in ${zone?.name || 'Sector'}!`);
+      showToast(`🚨 Emergency ${type.toUpperCase()} sounded in ${zone?.name || 'Safety Zone'}!`);
     } catch (err) {
       showToast(`🚨 Sounded floor buzzer locally!`);
     } finally {
@@ -122,10 +122,10 @@ export default function SupervisorBuzzerPage() {
             </span>
           </div>
           <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-1.5 flex items-center gap-2">
-            Sector Floor Hooter & Siren Console
+            Zone Floor Buzzer Console
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Manual and automated audible siren triggers for {zone?.name || 'Assigned Zone'}
+            Manual and automated Floor Buzzer triggers for {zone?.name || 'Assigned Zone'}
           </p>
         </div>
 
@@ -146,7 +146,7 @@ export default function SupervisorBuzzerPage() {
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <Siren className="w-5 h-5 text-amber-400" />
-                Floor Alarm Sounder Unit
+                Floor Buzzer Unit
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">Physical high-decibel audible alarm installed on ceiling bay</p>
             </div>
@@ -181,7 +181,7 @@ export default function SupervisorBuzzerPage() {
           {/* Action triggers */}
           <div className="space-y-3 pt-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Manual Siren Sounder Actions:
+              Manual Floor Buzzer Actions:
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <button
@@ -194,7 +194,7 @@ export default function SupervisorBuzzerPage() {
                 }`}
               >
                 <Volume2 className="w-5 h-5" />
-                <span>{activeAlert ? 'SOUNDING...' : 'TRIGGER SIREN (5s)'}</span>
+                <span>{activeAlert ? 'SOUNDING...' : 'TRIGGER BUZZER (5s)'}</span>
               </button>
 
               <button
@@ -211,7 +211,7 @@ export default function SupervisorBuzzerPage() {
                 className="p-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold text-xs flex flex-col items-center justify-center gap-2 transition cursor-pointer shadow-lg"
               >
                 <VolumeX className="w-5 h-5 text-amber-400" />
-                <span>SILENCE HOOTER</span>
+                <span>SILENCE BUZZER</span>
               </button>
             </div>
           </div>
@@ -226,7 +226,7 @@ export default function SupervisorBuzzerPage() {
             </div>
 
             <p className="text-xs text-slate-400 mt-3 leading-relaxed">
-              When armed, the AI compliance vision pipeline will automatically trigger this floor siren whenever a worker enters the bay without required PPE (Hard Hat or Vest).
+              When armed, the AI compliance vision pipeline will automatically trigger this Floor Buzzer whenever a worker enters the zone without required PPE (Hard Hat or Vest).
             </p>
 
             <div className="mt-6 p-4 rounded-xl bg-slate-950 border border-slate-800 text-center">
@@ -245,7 +245,7 @@ export default function SupervisorBuzzerPage() {
                 : 'bg-emerald-600 hover:bg-emerald-500 text-white'
             }`}
           >
-            {zone?.buzzerEnabled ? 'MUTE SECTOR BUZZER' : 'ARM SECTOR BUZZER'}
+            {zone?.buzzerEnabled ? 'MUTE ZONE BUZZER' : 'ARM ZONE BUZZER'}
           </button>
         </div>
       </div>

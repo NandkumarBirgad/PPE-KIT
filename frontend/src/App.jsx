@@ -113,9 +113,11 @@ export default function App() {
               <Route element={<SupervisorLayout />}>
                 <Route path="/supervisor/dashboard" element={<SupervisorDashboardPage />} />
                 <Route path="/supervisor/live" element={<LiveMonitoringPage />} />
+                <Route path="/supervisor/cameras" element={<CameraManagementPage />} />
                 <Route path="/supervisor/violations" element={<SupervisorViolationsPage />} />
                 <Route path="/supervisor/buzzers" element={<SupervisorBuzzerPage />} />
                 <Route path="/supervisor/notifications" element={<SupervisorNotificationsPage />} />
+                <Route path="/supervisor/settings" element={<SettingsPage />} />
               </Route>
             </Route>
 

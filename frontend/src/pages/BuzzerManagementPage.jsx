@@ -112,13 +112,13 @@ export default function BuzzerManagementPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2.5">
-            <h1 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Floor Buzzer & Siren Command Console</h1>
+            <h1 className="text-xl lg:text-2xl font-bold text-white tracking-tight">Floor Buzzer Command Console</h1>
             <span className="px-2 py-0.5 rounded-full bg-rose-950 border border-rose-800 text-rose-300 text-[10px] font-bold">
               Audible Safety Alarm Mesh
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Centralized control over floor audio sirens, sound wave modulation, emergency muting, and zone hazard alerts
+            Centralized control over Floor Buzzers, sound wave modulation, emergency muting, and zone hazard alerts
           </p>
         </div>
 
@@ -145,7 +145,7 @@ export default function BuzzerManagementPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Armed Floor Sirens</span>
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Armed Floor Buzzers</span>
             <div className="text-3xl font-black text-rose-400 mt-1">{armedCount}</div>
             <span className="text-[10px] text-emerald-400 font-medium">Automatic Violation Trigger Active</span>
           </div>
@@ -232,7 +232,7 @@ export default function BuzzerManagementPage() {
 
                   <div className="flex items-center justify-between text-slate-400">
                     <span className="text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1">
-                      <UserCheck className="w-3 h-3 text-emerald-400" /> Sector Lead:
+                      <UserCheck className="w-3 h-3 text-emerald-400" /> Zone Supervisor:
                     </span>
                     <span className="text-slate-200">{b.supervisor?.name || 'Assigned Lead'}</span>
                   </div>

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Bell, 
-  RefreshCw, 
-  CheckCircle2, 
-  MapPin, 
-  Phone, 
+import {
+  Bell,
+  RefreshCw,
+  CheckCircle2,
+  MapPin,
+  Phone,
   Send,
   AlertTriangle,
   Clock
@@ -50,7 +50,7 @@ export default function SupervisorNotificationsPage() {
         missingPPE: ['Safety Notice Broadcast'],
         message: `📢 Supervisor Notice: ${broadcastMessage.trim()}`,
       });
-      setToastMessage('Safety announcement dispatched to sector workers via SMS & WhatsApp!');
+      setToastMessage('Safety announcement dispatched to zone workers via SMS & WhatsApp!');
       setBroadcastMessage('');
       fetchNotifications();
       setTimeout(() => setToastMessage(''), 4500);
@@ -96,11 +96,11 @@ export default function SupervisorNotificationsPage() {
         </button>
       </div>
 
-      {/* Quick Sector Broadcast Card */}
+      {/* Quick Zone Broadcast Card */}
       <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-xl space-y-3">
         <h3 className="font-bold text-white text-xs uppercase tracking-wider flex items-center gap-2">
           <Send className="w-4 h-4 text-emerald-400" />
-          Broadcast Instant Sector Safety Directive
+          Broadcast Instant Zone Safety Directive
         </h3>
         <form onSubmit={handleBroadcast} className="flex gap-2">
           <input
@@ -126,19 +126,19 @@ export default function SupervisorNotificationsPage() {
         {loading ? (
           <div className="py-16 text-center text-slate-400 text-xs">
             <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-            Loading sector alert history...
+            Loading zone alert history...
           </div>
         ) : notifications.length === 0 ? (
           <div className="py-16 text-center text-slate-500 text-xs">
             <CheckCircle2 className="w-8 h-8 mx-auto mb-2 text-emerald-500/40" />
-            No alerts dispatched for your sector yet.
+            No alerts dispatched for your zone yet.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-300">
               <thead className="bg-slate-950 text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
                 <tr>
-                  <th className="p-3.5">Sector</th>
+                  <th className="p-3.5">Zone</th>
                   <th className="p-3.5">Violation / Directive Message</th>
                   <th className="p-3.5">Missing PPE</th>
                   <th className="p-3.5">Channel</th>

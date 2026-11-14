@@ -22,15 +22,22 @@ import {
   Zap,
   Sparkles,
   RefreshCw,
-  Video
+  Video,
+  Film,
+  Activity
 } from 'lucide-react';
 import api, { AI_BASE_URL } from '../services/api';
+import { getZoneColor, formatSvgPoints, computePolygonCentroid } from '../services/cameraPolygonService';
+import UploadedVideoInspector from '../components/UploadedVideoInspector';
 
 export default function LiveMonitoringPage() {
+  const [monitoringMode, setMonitoringMode] = useState('live');
   const [isStreaming, setIsStreaming] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
   const [cameraError, setCameraError] = useState('');
   const [zones, setZones] = useState([]);
+  const [cameras, setCameras] = useState([]);
+  const [showZoneBoundaries, setShowZoneBoundaries] = useState(true);
   const [selectedZoneId, setSelectedZoneId] = useState('');
   const [selectedZone, setSelectedZone] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -62,6 +69,9 @@ export default function LiveMonitoringPage() {
   const detectionTimerRef = useRef(null);
   const audioContextRef = useRef(null);
   const lastAlertDispatchTimeRef = useRef(0);
+  const sessionIdRef = useRef(null);
+  const isDetectingInFlightRef = useRef(false);
+  const sessionStartPerfTimeRef = useRef(0);
 
   // Web Audio Industrial Siren Synthesizer
   const playIndustrialBuzzer = useCallback(() => {
@@ -105,15 +115,23 @@ export default function LiveMonitoringPage() {
   useEffect(() => {
     const initPage = async () => {
       try {
-        const zoneRes = await api.get('/zones');
-        const activeZones = (zoneRes.data || []).filter((z) => z.active);
-        setZones(activeZones);
-        if (activeZones.length > 0) {
-          setSelectedZoneId(activeZones[0]._id);
-          setSelectedZone(activeZones[0]);
+        const [zoneRes, camRes] = await Promise.allSettled([
+          api.get('/zones'),
+          api.get('/cameras')
+        ]);
+        if (zoneRes.status === 'fulfilled') {
+          const activeZones = (zoneRes.value.data || []).filter((z) => z.active);
+          setZones(activeZones);
+          if (activeZones.length > 0) {
+            setSelectedZoneId(activeZones[0]._id);
+            setSelectedZone(activeZones[0]);
+          }
+        }
+        if (camRes.status === 'fulfilled') {
+          setCameras(camRes.value.data || []);
         }
       } catch (err) {
-        console.error('Error fetching zones:', err);
+        console.error('Error fetching zones or cameras:', err);
       }
 
       try {
@@ -181,33 +199,62 @@ export default function LiveMonitoringPage() {
   const captureAndDetect = useCallback(async () => {
     if (!videoRef.current || !canvasRef.current || !isStreaming) return;
 
+    // Phase 4: Sequential capture - skip if previous detection request is still in flight
+    if (isDetectingInFlightRef.current) return;
+
     const video = videoRef.current;
     if (video.readyState !== 4) return;
 
-    const canvas = canvasRef.current;
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    if (!sessionIdRef.current) {
+      sessionIdRef.current = 'live_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+      sessionStartPerfTimeRef.current = performance.now();
+    }
+    const currentSessionId = sessionIdRef.current;
 
-    const base64Data = canvas.toDataURL('image/jpeg', 0.85);
-
+    isDetectingInFlightRef.current = true;
     try {
+      const canvas = canvasRef.current;
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      const base64Data = canvas.toDataURL('image/jpeg', 0.85);
+
+      // Capture monotonic timestamp at exact frame-capture time relative to session start in seconds
+      const captureTimestamp = Math.max(
+        0.0,
+        (performance.now() - sessionStartPerfTimeRef.current) / 1000.0
+      );
+
       const startTime = performance.now();
+      const token = localStorage.getItem('ppe_auth_token');
+      const fetchHeaders = { 'Content-Type': 'application/json' };
+      if (token) fetchHeaders['Authorization'] = `Bearer ${token}`;
+
       const res = await fetch(`${AI_BASE_URL}/detect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: fetchHeaders,
         body: JSON.stringify({
           image: base64Data,
           required_ppe: selectedZone?.requiredPPE || ['helmet', 'vest'],
           zone_name: selectedZone?.name || 'Live Surveillance',
+          zone_id: selectedZone?._id,
+          camera_id: activeCamera?._id,
           confidence_threshold: 0.35,
+          session_id: currentSessionId,
+          timestamp: captureTimestamp,
         }),
       });
 
       if (!res.ok) throw new Error('AI detection endpoint failed');
       const data = await res.json();
       const duration = Math.round(performance.now() - startTime);
+
+      // Do not allow an old request to mutate a newly started or stopped session
+      if (sessionIdRef.current !== currentSessionId) {
+        return;
+      }
 
       setDetectionResult({
         complianceStatus: data.compliance_status || 'UNCERTAIN',
@@ -219,26 +266,33 @@ export default function LiveMonitoringPage() {
         timestamp: new Date().toLocaleTimeString(),
       });
 
-      // Sound buzzer & auto-notify supervisor on violation
-      if (data.compliance_status === 'VIOLATION') {
+      // M2.2B.4H: Dashboard + sound alert gating - emit alert only once per newly confirmed episode
+      const newIncidents = data.new_confirmed_incidents || [];
+      if (newIncidents.length > 0) {
         if (selectedZone?.buzzerEnabled !== false) {
           playIndustrialBuzzer();
         }
 
-        const now = Date.now();
-        if (autoNotifySupervisor && now - lastAlertDispatchTimeRef.current > 12000) {
-          lastAlertDispatchTimeRef.current = now;
-          dispatchSupervisorAlert(data.missing_ppe || []);
+        if (autoNotifySupervisor) {
+          const missingItems = newIncidents.map((inc) => inc.missingPPE?.[0] || 'PPE').filter(Boolean);
+          dispatchSupervisorAlert(missingItems);
         }
       }
     } catch (err) {
       console.warn('Frame detection error:', err);
+    } finally {
+      // Always release the in-flight guard on both success and failure
+      isDetectingInFlightRef.current = false;
     }
   }, [isStreaming, selectedZone, playIndustrialBuzzer, autoNotifySupervisor, dispatchSupervisorAlert]);
 
   // Start Camera AND Auto-Start AI Detection (1-Click Easy Start)
   const startScanner = async (deviceIdToUse) => {
     setCameraError('');
+    // Start fresh tracking session for this monitoring run
+    sessionIdRef.current = 'live_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+    sessionStartPerfTimeRef.current = performance.now();
+    isDetectingInFlightRef.current = false;
     try {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
@@ -274,6 +328,7 @@ export default function LiveMonitoringPage() {
 
   // Stop Camera & Scanner
   const stopScanner = () => {
+    isDetectingInFlightRef.current = false;
     if (detectionTimerRef.current) {
       clearInterval(detectionTimerRef.current);
       detectionTimerRef.current = null;
@@ -284,6 +339,18 @@ export default function LiveMonitoringPage() {
     }
     if (videoRef.current) {
       videoRef.current.srcObject = null;
+    }
+    if (sessionIdRef.current) {
+      const oldSession = sessionIdRef.current;
+      sessionIdRef.current = null;
+      const token = localStorage.getItem('ppe_auth_token');
+      const resetHeaders = { 'Content-Type': 'application/json' };
+      if (token) resetHeaders['Authorization'] = `Bearer ${token}`;
+      fetch(`${AI_BASE_URL}/api/tracker/reset`, {
+        method: 'POST',
+        headers: resetHeaders,
+        body: JSON.stringify({ session_id: oldSession }),
+      }).catch(() => {});
     }
     setIsStreaming(false);
     setIsDetecting(false);
@@ -351,6 +418,9 @@ export default function LiveMonitoringPage() {
     alertChannel: 'WhatsApp & SMS',
   };
 
+  const activeCamera = cameras.find((c) => String(c.zoneId) === String(selectedZoneId)) || cameras[0];
+  const activeCameraZones = Array.isArray(activeCamera?.zones) ? activeCamera.zones : [];
+
   const primaryPerson = detectionResult.persons?.[0];
   const scannedParts = primaryPerson?.scanned_body_parts || [];
   const ignoredPPE = primaryPerson?.ignored_unscanned_ppe || [];
@@ -360,8 +430,50 @@ export default function LiveMonitoringPage() {
       {/* Hidden processing canvas */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Top Header & Easy Zone Selection */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg">
+      {/* Monitoring Mode Tabs */}
+      <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+        <button
+          type="button"
+          onClick={() => setMonitoringMode('live')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
+            monitoringMode === 'live'
+              ? 'bg-sky-600 text-white shadow-lg shadow-sky-600/30'
+              : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+        >
+          <Video className="w-4 h-4" />
+          <span>Live CCTV Stream / Scanner</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (isStreaming) stopScanner();
+            setMonitoringMode('video');
+          }}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition ${
+            monitoringMode === 'video'
+              ? 'bg-sky-600 text-white shadow-lg shadow-sky-600/30'
+              : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+        >
+          <Film className="w-4 h-4 text-amber-400" />
+          <span>Prerecorded Factory Video Inspection</span>
+        </button>
+      </div>
+
+      {monitoringMode === 'video' ? (
+        <UploadedVideoInspector
+          allCameras={cameras}
+          availableZones={zones}
+          onCameraPolygonsUpdated={() => {
+            api.get('/cameras').then((res) => setCameras(res.data || []));
+          }}
+        />
+      ) : (
+        <>
+          {/* Top Header & Easy Zone Selection */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <div className="flex items-center gap-2.5">
@@ -379,6 +491,28 @@ export default function LiveMonitoringPage() {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 AI Active
               </span>
+
+              {activeCamera && (
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border flex items-center gap-1 uppercase ${
+                  activeCamera.status === 'ONLINE'
+                    ? 'bg-emerald-950/80 border-emerald-800 text-emerald-400'
+                    : activeCamera.status === 'WARNING'
+                    ? 'bg-amber-950/80 border-amber-800 text-amber-300'
+                    : activeCamera.status === 'DEGRADED'
+                    ? 'bg-purple-950/80 border-purple-800 text-purple-300'
+                    : activeCamera.status === 'COMPLETED'
+                    ? 'bg-sky-950/80 border-sky-800 text-sky-300'
+                    : 'bg-rose-950/80 border-rose-800 text-rose-400'
+                }`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    activeCamera.status === 'ONLINE' ? 'bg-emerald-400' :
+                    activeCamera.status === 'WARNING' ? 'bg-amber-400 animate-pulse' :
+                    activeCamera.status === 'DEGRADED' ? 'bg-purple-400' :
+                    activeCamera.status === 'COMPLETED' ? 'bg-sky-400' : 'bg-rose-400'
+                  }`}></span>
+                  Camera: {activeCamera.status || 'ONLINE'}
+                </span>
+              )}
             </div>
             <p className="text-xs text-slate-400 mt-1">
               Select your work zone, start the camera, and stand in front to verify safety compliance.
@@ -416,6 +550,21 @@ export default function LiveMonitoringPage() {
               {buzzerMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
               <span>{buzzerMuted ? 'Muted' : 'Sound On'}</span>
             </button>
+
+            {activeCameraZones.length > 0 && (
+              <button
+                onClick={() => setShowZoneBoundaries(!showZoneBoundaries)}
+                className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition ${
+                  showZoneBoundaries
+                    ? 'bg-sky-950/60 border-sky-700 text-sky-300'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+                }`}
+                title="Toggle spatial safety zone boundary overlays"
+              >
+                <Layers className="w-4 h-4 text-sky-400" />
+                <span>{showZoneBoundaries ? 'Zones Visible' : 'Zones Hidden'}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -465,6 +614,30 @@ export default function LiveMonitoringPage() {
         </div>
       )}
 
+      {activeCamera?.status && activeCamera.status !== 'ONLINE' && (
+        <div className={`p-3.5 rounded-xl border text-xs flex items-center justify-between shadow-lg ${
+          activeCamera.status === 'WARNING'
+            ? 'bg-amber-950/40 border-amber-800 text-amber-200'
+            : activeCamera.status === 'DEGRADED'
+            ? 'bg-purple-950/40 border-purple-800 text-purple-200'
+            : activeCamera.status === 'COMPLETED'
+            ? 'bg-sky-950/40 border-sky-800 text-sky-200'
+            : 'bg-rose-950/40 border-rose-800 text-rose-200'
+        }`}>
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 flex-shrink-0" />
+            <span>
+              <b>{activeCamera.name}:</b> {activeCamera.status_reason || `Camera feed status is ${activeCamera.status}`}
+            </span>
+          </div>
+          {activeCamera.last_frame_time_iso && (
+            <span className="text-[11px] font-mono opacity-80">
+              Last Frame: {new Date(activeCamera.last_frame_time_iso).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+      )}
+
       {dispatchStatus && (
         <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-800 text-emerald-200 text-xs flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -500,6 +673,55 @@ export default function LiveMonitoringPage() {
                 alt="AI Annotated Frame"
                 className="w-full h-full object-cover"
               />
+            )}
+
+            {/* Configured Safety Zone Boundaries Overlay */}
+            {isStreaming && showZoneBoundaries && activeCameraZones.length > 0 && (
+              <svg
+                className="absolute inset-0 w-full h-full pointer-events-none select-none z-10"
+                viewBox="0 0 1000 1000"
+                preserveAspectRatio="none"
+              >
+                {activeCameraZones.map((m, zIdx) => {
+                  const color = getZoneColor(zIdx);
+                  const pointsStr = formatSvgPoints(m.polygon, 1000);
+                  const centroid = computePolygonCentroid(m.polygon);
+                  return (
+                    <g key={m.zoneId || zIdx}>
+                      <polygon
+                        points={pointsStr}
+                        fill={color.fill}
+                        stroke={color.stroke}
+                        strokeWidth="3"
+                        strokeDasharray="6 3"
+                      />
+                      <g transform={`translate(${centroid.x * 1000}, ${centroid.y * 1000})`}>
+                        <rect
+                          x="-60"
+                          y="-13"
+                          width="120"
+                          height="26"
+                          rx="6"
+                          fill="#020617"
+                          fillOpacity="0.85"
+                          stroke={color.stroke}
+                          strokeWidth="1.5"
+                        />
+                        <text
+                          x="0"
+                          y="4"
+                          textAnchor="middle"
+                          fill="#ffffff"
+                          fontSize="14"
+                          fontWeight="bold"
+                        >
+                          {m.zoneName || `Zone ${m.zoneId}`}
+                        </text>
+                      </g>
+                    </g>
+                  );
+                })}
+              </svg>
             )}
 
             {/* Camera OFF Placeholder State */}
@@ -770,6 +992,8 @@ export default function LiveMonitoringPage() {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

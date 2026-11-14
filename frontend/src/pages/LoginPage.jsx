@@ -125,7 +125,7 @@ export default function LoginPage() {
           <div className="relative z-10 pt-4 border-t border-white/20 flex items-center justify-between text-xs text-slate-200">
             <div className="flex items-center gap-2">
               <Building2 className="w-4 h-4 text-amber-400" />
-              <span>Plant Unit 04 • Heavy Engineering Sector</span>
+              <span>Plant Unit 04 • Heavy Engineering Zone</span>
             </div>
             <span className="text-[11px] font-mono text-emerald-400 font-bold">ISO 45001 • OSHA 1910</span>
           </div>
@@ -204,7 +204,7 @@ export default function LoginPage() {
                       Zone Supervisor
                     </div>
                     <div className="text-[10px] text-slate-500 font-mono">
-                      Bay 01 Marshal • Local Buzzer & Alerts
+                      Zone 01 Supervisor • Local Floor Buzzer & Alerts
                     </div>
                   </div>
                 </div>

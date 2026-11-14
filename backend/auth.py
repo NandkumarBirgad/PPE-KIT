@@ -8,11 +8,17 @@ from database import is_mongo_connected, get_users_col, mem_users
 
 def normalize_role(role_str):
     if not role_str:
-        return "ZONE_SUPERVISOR"
+        return ""
     r = str(role_str).strip().upper()
+    if not r:
+        return ""
     if r in ["SUPER_ADMIN", "ADMIN"]:
         return "SUPER_ADMIN"
-    return "ZONE_SUPERVISOR"
+    if r in ["ZONE_SUPERVISOR", "SUPERVISOR"]:
+        return "ZONE_SUPERVISOR"
+    if r == "REVIEWER":
+        return "REVIEWER"
+    return r
 
 def generate_token(user_id, role, email, assigned_zone_id=None, assigned_zone_name=None, name=None):
     norm_role = normalize_role(role)
@@ -45,7 +51,20 @@ def token_required(f):
             token = auth_header.split(" ")[1]
 
         if not token:
-            return jsonify({"message": "Authentication token missing"}), 401
+            # Enforce authentication strictly by default. Dev fallback is permitted only on routes explicitly marked with _allow_dev_fallback outside production
+            if not getattr(f, "_allow_dev_fallback", False) or Config.IS_PRODUCTION or Config.ENFORCE_STRICT_AUTH:
+                return jsonify({"message": "Authentication token missing"}), 401
+
+            # In development/test mode without strict auth, provide a fallback operator identity
+            request.current_user = {
+                "id": "usr_dev_default",
+                "role": "ZONE_SUPERVISOR",
+                "email": "dev@ppe.com",
+                "name": "Development Operator",
+                "assignedZoneId": "zone_01",
+                "assignedZoneName": "Heavy Assembly Bay 01"
+            }
+            return f(*args, **kwargs)
 
         payload = decode_token(token)
         if not payload:
@@ -55,10 +74,20 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def dev_fallback_allowed(f):
+    """Marks an inference or ingestion endpoint to permit development operator fallback outside production."""
+    f._allow_dev_fallback = True
+    return f
+
+def strict_token_required(f):
+    """Decorator for sensitive endpoints requiring strict authentication across all environments."""
+    f._allow_dev_fallback = False
+    return token_required(f)
+
 def super_admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not hasattr(request, "current_user") or request.current_user.get("role") not in ["SUPER_ADMIN", "admin"]:
+        if not hasattr(request, "current_user") or normalize_role(request.current_user.get("role")) != "SUPER_ADMIN":
             return jsonify({"message": "Super Admin access required"}), 403
         return f(*args, **kwargs)
     return decorated
@@ -66,8 +95,8 @@ def super_admin_required(f):
 def supervisor_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        allowed = ["ZONE_SUPERVISOR", "SUPER_ADMIN", "admin", "supervisor", "reviewer"]
-        if not hasattr(request, "current_user") or request.current_user.get("role") not in allowed:
+        allowed = ["ZONE_SUPERVISOR", "SUPER_ADMIN"]
+        if not hasattr(request, "current_user") or normalize_role(request.current_user.get("role")) not in allowed:
             return jsonify({"message": "Zone Supervisor privilege required"}), 403
         return f(*args, **kwargs)
     return decorated
