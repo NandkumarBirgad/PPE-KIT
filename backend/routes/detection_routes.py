@@ -8,7 +8,7 @@ import threading
 from typing import Optional, Any
 import numpy as np
 import cv2
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response, stream_with_context
 from database import (
     is_mongo_connected, 
     get_detections_col, 
@@ -739,6 +739,272 @@ def detect_image():
         "new_resolved_incidents": new_resolved_incidents
     }), 200
 
+def process_video_frame_sample(
+    frame: np.ndarray,
+    timestamp_sec: float,
+    frame_idx: int,
+    video_session_id: str,
+    conf_thresh: float,
+    conf_dur: float,
+    camera_doc: dict,
+    has_camera_polygons: bool,
+    camera_id_str: str,
+    camera_name_str: str,
+    required_ppe: list,
+    default_ppe: list,
+    confirmed_video_episodes: set,
+    persisted_incidents_list: list,
+    record_health: bool = True
+):
+    """
+    Milestone M2.1: Reusable frame-processing helper for uploaded factory videos.
+    Executes YOLO inference, spatial zone assignment, authoritative PPE policy retrieval,
+    compliance evaluation, visual annotation, incident confirmation, and auto-resolution.
+    """
+    from ai_engine.zone_assignment import (
+        assign_persons_spatial_zones,
+        get_authoritative_zone_ppe
+    )
+    from ai_engine.compliance import normalize_ppe_class, CANONICAL_PPE_REGION_MAP
+    from ai_engine.temporal_compliance import get_session_temporal_tracker
+
+    fh, fw = frame.shape[:2]
+    t_frame_start = time.time()
+
+    # 1. Anonymous Worker Tracking & PPE Detection
+    _, detected_objects, persons = detect_ppe_in_frame(
+        frame, confidence_threshold=conf_thresh, session_id=video_session_id, timestamp=timestamp_sec
+    )
+    if record_health and camera_id_str and camera_id_str != "uploaded_video":
+        record_camera_frame_success(camera_id_str)
+
+    # 2. Spatial Zone Resolution & Bounding Box Normalization
+    for p in persons:
+        if "bbox" not in p or p["bbox"] is None:
+            p["bbox"] = []
+    for d in detected_objects:
+        if "bbox" not in d or d["bbox"] is None:
+            d["bbox"] = []
+
+    persons = assign_persons_spatial_zones(
+        persons, camera_doc, img_shape=(fh, fw), session_id=video_session_id, timestamp=timestamp_sec
+    )
+
+    # 3. Retrieve and Apply Authoritative Zone PPE Policies
+    for person in persons:
+        z_status = person.get("zone_assignment_status", "UNASSIGNED")
+        p_zid = person.get("zone_id")
+
+        if has_camera_polygons:
+            if z_status == "ASSIGNED" and p_zid:
+                auth_policy = get_authoritative_zone_ppe(p_zid)
+                if auth_policy is not None:
+                    person["zone_policy_valid"] = True
+                    person["required_ppe"] = auth_policy
+                    person["uncertain"] = False
+                    person["uncertain_reason"] = None
+                else:
+                    person["zone_policy_valid"] = False
+                    person["uncertain"] = True
+                    person["uncertain_reason"] = "INVALID_ZONE_POLICY"
+                    person["required_ppe"] = []
+            elif z_status == "UNASSIGNED":
+                person["zone_policy_valid"] = True
+                person["uncertain"] = True
+                person["uncertain_reason"] = "NO_MONITORED_ZONE"
+                person["required_ppe"] = []
+            elif z_status == "UNCERTAIN":
+                person["zone_policy_valid"] = True
+                person["uncertain"] = True
+                person["uncertain_reason"] = person.get("uncertain_reason") or "ZONE_BOUNDARY_AMBIGUITY"
+                person["required_ppe"] = []
+        else:
+            person["zone_assignment_status"] = "ASSIGNED"
+            person["zone_policy_valid"] = True
+            if required_ppe:
+                person["required_ppe"] = [
+                    normalize_ppe_class(r) for r in required_ppe
+                    if normalize_ppe_class(r) in CANONICAL_PPE_REGION_MAP
+                ]
+            elif p_zid:
+                person["required_ppe"] = get_authoritative_zone_ppe(p_zid) or default_ppe
+            else:
+                person["required_ppe"] = default_ppe
+
+    # 4. Compliance Evaluation with Body Part Scanning & Temporal Confirmation
+    comp_status, missing_ppe, evaluated_persons = evaluate_compliance(
+        persons, detected_objects, required_ppe, confidence_threshold=conf_thresh,
+        img_shape=(fh, fw), session_id=video_session_id, timestamp=timestamp_sec,
+        confirmation_duration_sec=conf_dur
+    )
+
+    # M2.2 Compliance Presentation Rule Alignment:
+    # - COMPLIANT requires reliable positive evidence that required PPE is present.
+    # - UNCERTAIN means reliable compliance cannot be established (e.g. grace period / unconfirmed missing PPE).
+    # - VIOLATION requires genuine missing-PPE evidence and the existing confirmation duration.
+    # - A grace period must NEVER be presented as proof of compliance.
+    # - Unobservable body parts must NOT generate violations.
+    has_confirmed_violation = False
+    has_uncertain_worker = False
+
+    for p in evaluated_persons:
+        confirmed_miss = p.get("missing_ppe", [])
+        pending_miss = p.get("pending_missing_ppe", [])
+        is_p_uncertain = bool(p.get("uncertain"))
+
+        if len(confirmed_miss) > 0:
+            p["compliant"] = False
+            p["uncertain"] = False
+            has_confirmed_violation = True
+        elif len(pending_miss) > 0:
+            p["compliant"] = False
+            p["uncertain"] = True
+            p["uncertain_reason"] = "PENDING_CONFIRMATION"
+            has_uncertain_worker = True
+        elif is_p_uncertain:
+            p["compliant"] = False
+            p["uncertain"] = True
+            has_uncertain_worker = True
+        else:
+            p["compliant"] = bool(p.get("compliant", True))
+            p["uncertain"] = False
+
+    if has_confirmed_violation or comp_status == "VIOLATION":
+        comp_status = "VIOLATION"
+    elif has_uncertain_worker or comp_status == "UNCERTAIN" or len(evaluated_persons) == 0:
+        comp_status = "UNCERTAIN"
+    else:
+        comp_status = "COMPLIANT"
+
+    # Draw Visual Annotations
+    valid_annot_persons = [p for p in evaluated_persons if p.get("bbox") and len(p.get("bbox")) >= 4]
+    annotated_img = draw_compliance_annotations(frame, valid_annot_persons, detected_objects, comp_status)
+    frame_annotated_b64 = encode_image_to_base64(annotated_img)
+
+    # 5. Persist Newly Confirmed Violation Incidents
+    frame_new_violations = []
+    new_persisted_incidents = []
+    for p in evaluated_persons:
+        track_id = p.get("track_id")
+        worker_id = p.get("worker_id", f"W-{track_id:03d}" if track_id else "Worker #1")
+        temporal_state = p.get("temporal_state", {})
+        p_zid = p.get("zone_id") if has_camera_polygons else camera_doc.get("zoneId")
+        p_zname = p.get("zone_name") if has_camera_polygons else camera_doc.get("zoneName", "Video Upload")
+
+        for cat in p.get("new_confirmed_violations", []):
+            st_dict = temporal_state.get(cat, {})
+            ep_id = st_dict.get("episode_id")
+            if ep_id and ep_id not in confirmed_video_episodes:
+                confirmed_video_episodes.add(ep_id)
+                vid_incident = {
+                    "episode_id": ep_id,
+                    "worker_id": worker_id,
+                    "track_id": int(track_id) if track_id is not None else 1,
+                    "personId": worker_id,
+                    "workerTag": f"{worker_id} (Track #{track_id})" if track_id is not None else worker_id,
+                    "session_id": str(video_session_id),
+                    "zoneId": p_zid,
+                    "zoneName": p_zname,
+                    "cameraId": camera_id_str,
+                    "cameraName": camera_name_str,
+                    "sourceType": "video_file",
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc),
+                    "detectedClasses": detected_objects,
+                    "confidenceScores": [d.get("confidence", 0.0) for d in detected_objects],
+                    "missingPPE": [cat],
+                    "complianceStatus": "VIOLATION",
+                    "personCount": len(evaluated_persons),
+                    "reviewStatus": "PENDING",
+                    "status": "OPEN",
+                    "reviewerNotes": "",
+                    "first_missing_timestamp": st_dict.get("first_missing_timestamp"),
+                    "confirmed_timestamp": st_dict.get("confirmed_timestamp"),
+                    "imageUrl": None,
+                    "evidenceImageReference": frame_annotated_b64,
+                    "processingMetadata": {
+                        "video_timestamp_sec": timestamp_sec,
+                        "accumulated_missing_sec": st_dict.get("accumulated_missing_sec", conf_dur),
+                        "model": "YOLOv8",
+                        "camera_id": camera_id_str,
+                        "has_camera_polygons": has_camera_polygons
+                    },
+                    "createdAt": datetime.datetime.now(datetime.timezone.utc)
+                }
+                persist_confirmed_incident(vid_incident)
+                persisted_incidents_list.append(vid_incident)
+                new_persisted_incidents.append(vid_incident)
+                frame_new_violations.append({
+                    "worker_id": worker_id,
+                    "track_id": track_id,
+                    "missing_ppe": cat,
+                    "zone_id": p_zid,
+                    "zone_name": p_zname,
+                    "episode_id": ep_id
+                })
+
+    # 6. Automatic Resolution of Video Episodes upon Continuous Compliance
+    vid_tracker = get_session_temporal_tracker(video_session_id)
+    resolved_in_frame = process_resolution_candidates(vid_tracker, video_session_id)
+    frame_new_resolutions = []
+    for r in resolved_in_frame:
+        r_epid = r.get("episode_id")
+        if r_epid:
+            frame_new_resolutions.append(r)
+
+    frame_detected_objects = [
+        {
+            "class": d.get("class") or d.get("name"),
+            "name": d.get("name") or d.get("class"),
+            "confidence": round(float(d.get("confidence", 0.0)), 3),
+            "bbox": [int(x) for x in d.get("bbox", [])] if (d.get("bbox") and len(d.get("bbox")) >= 4) else []
+        }
+        for d in detected_objects
+        if d.get("bbox") and len(d.get("bbox")) >= 4
+    ]
+
+    frame_latency_ms = int((time.time() - t_frame_start) * 1000)
+
+    frame_data = {
+        "frame_idx": frame_idx,
+        "timestamp_sec": timestamp_sec,
+        "compliance_status": comp_status,
+        "missing_ppe": missing_ppe,
+        "persons_count": len(evaluated_persons),
+        "annotated_image": frame_annotated_b64,
+        "new_confirmed_violations": frame_new_violations,
+        "new_resolved_violations": frame_new_resolutions,
+        "detected_objects": frame_detected_objects,
+        "detected_classes": frame_detected_objects,
+        "latency_ms": frame_latency_ms,
+        "persons": [
+            {
+                "worker_id": p.get("worker_id"),
+                "track_id": p.get("track_id"),
+                "bbox": p.get("bbox") if (p.get("bbox") and len(p.get("bbox")) >= 4) else None,
+                "zone_id": p.get("zone_id"),
+                "zone_name": p.get("zone_name"),
+                "compliant": p.get("compliant"),
+                "uncertain": p.get("uncertain"),
+                "uncertain_reason": p.get("uncertain_reason"),
+                "missing_ppe": p.get("missing_ppe", []),
+                "pending_missing_ppe": p.get("pending_missing_ppe", [])
+            }
+            for p in evaluated_persons
+        ]
+    }
+
+    return (
+        frame_data,
+        detected_objects,
+        comp_status,
+        missing_ppe,
+        frame_new_violations,
+        frame_new_resolutions,
+        new_persisted_incidents,
+        frame_annotated_b64
+    )
+
+
 @detection_bp.route("/detect-video", methods=["POST"])
 @detection_bp.route("/api/detect-video", methods=["POST"])
 @token_required
@@ -781,8 +1047,8 @@ def detect_video():
     zone_id = request.form.get("zoneId") or request.form.get("zone_id")
     conf_thresh = float(request.form.get("confidence_threshold", 0.35))
     conf_dur = float(request.form.get("confirmation_duration_sec", 3.0))
-    sample_interval_sec = float(request.form.get("sample_interval_sec", 0.8))
-    max_frames = min(int(request.form.get("max_frames", 60)), 120)
+    sample_interval_sec = float(request.form.get("sample_interval_sec", 0.5))
+    max_frames = min(int(request.form.get("max_frames", 300)), 1000)
 
     from ai_engine.zone_assignment import (
         assign_persons_spatial_zones,
@@ -842,143 +1108,38 @@ def detect_video():
                 break
 
             if frame_count % frame_interval == 0:
-                fh, fw = frame.shape[:2]
                 timestamp_sec = round(frame_count / fps, 3)
-
-                # 1. Anonymous Worker Tracking & PPE Detection
-                _, detected_objects, persons = detect_ppe_in_frame(
-                    frame, confidence_threshold=conf_thresh, session_id=video_session_id, timestamp=timestamp_sec
+                (
+                    frame_data,
+                    detected_objects,
+                    comp_status,
+                    missing_ppe,
+                    frame_new_violations,
+                    frame_new_resolutions,
+                    new_persisted_incidents,
+                    frame_annotated_b64
+                ) = process_video_frame_sample(
+                    frame=frame,
+                    timestamp_sec=timestamp_sec,
+                    frame_idx=total_frames_processed + 1,
+                    video_session_id=video_session_id,
+                    conf_thresh=conf_thresh,
+                    conf_dur=conf_dur,
+                    camera_doc=camera_doc,
+                    has_camera_polygons=has_camera_polygons,
+                    camera_id_str=camera_id_str,
+                    camera_name_str=camera_name_str,
+                    required_ppe=required_ppe,
+                    default_ppe=default_ppe,
+                    confirmed_video_episodes=confirmed_video_episodes,
+                    persisted_incidents_list=persisted_incidents_list,
+                    record_health=bool(camera_id and camera_id_str != "uploaded_video")
                 )
-                if camera_id and camera_id_str != "uploaded_video":
-                    record_camera_frame_success(camera_id_str)
-
-                # 2. Spatial Zone Resolution
-                persons = assign_persons_spatial_zones(
-                    persons, camera_doc, img_shape=(fh, fw), session_id=video_session_id, timestamp=timestamp_sec
-                )
-
-                # 3. Retrieve and Apply Authoritative Zone PPE Policies
-                for person in persons:
-                    z_status = person.get("zone_assignment_status", "UNASSIGNED")
-                    p_zid = person.get("zone_id")
-
-                    if has_camera_polygons:
-                        if z_status == "ASSIGNED" and p_zid:
-                            auth_policy = get_authoritative_zone_ppe(p_zid)
-                            if auth_policy is not None:
-                                person["zone_policy_valid"] = True
-                                person["required_ppe"] = auth_policy
-                                person["uncertain"] = False
-                                person["uncertain_reason"] = None
-                            else:
-                                person["zone_policy_valid"] = False
-                                person["uncertain"] = True
-                                person["uncertain_reason"] = "INVALID_ZONE_POLICY"
-                                person["required_ppe"] = []
-                        elif z_status == "UNASSIGNED":
-                            person["zone_policy_valid"] = True
-                            person["uncertain"] = True
-                            person["uncertain_reason"] = "NO_MONITORED_ZONE"
-                            person["required_ppe"] = []
-                        elif z_status == "UNCERTAIN":
-                            person["zone_policy_valid"] = True
-                            person["uncertain"] = True
-                            person["uncertain_reason"] = person.get("uncertain_reason") or "ZONE_BOUNDARY_AMBIGUITY"
-                            person["required_ppe"] = []
-                    else:
-                        person["zone_assignment_status"] = "ASSIGNED"
-                        person["zone_policy_valid"] = True
-                        if required_ppe:
-                            person["required_ppe"] = [
-                                normalize_ppe_class(r) for r in required_ppe
-                                if normalize_ppe_class(r) in CANONICAL_PPE_REGION_MAP
-                            ]
-                        elif p_zid:
-                            person["required_ppe"] = get_authoritative_zone_ppe(p_zid) or default_ppe
-                        else:
-                            person["required_ppe"] = default_ppe
-
-                # 4. Compliance Evaluation with Body Part Scanning & Temporal Confirmation
-                comp_status, missing_ppe, evaluated_persons = evaluate_compliance(
-                    persons, detected_objects, required_ppe, confidence_threshold=conf_thresh,
-                    img_shape=(fh, fw), session_id=video_session_id, timestamp=timestamp_sec,
-                    confirmation_duration_sec=conf_dur
-                )
-
-                # Draw Visual Annotations
-                annotated_img = draw_compliance_annotations(frame, evaluated_persons, detected_objects, comp_status)
-                frame_annotated_b64 = encode_image_to_base64(annotated_img)
                 last_annotated_b64 = frame_annotated_b64
-
-                # 5. Persist Newly Confirmed Violation Incidents
-                frame_new_violations = []
-                for p in evaluated_persons:
-                    track_id = p.get("track_id")
-                    worker_id = p.get("worker_id", f"W-{track_id:03d}" if track_id else "Worker #1")
-                    temporal_state = p.get("temporal_state", {})
-                    p_zid = p.get("zone_id") if has_camera_polygons else camera_doc.get("zoneId")
-                    p_zname = p.get("zone_name") if has_camera_polygons else camera_doc.get("zoneName", "Video Upload")
-
-                    for cat in p.get("new_confirmed_violations", []):
-                        st_dict = temporal_state.get(cat, {})
-                        ep_id = st_dict.get("episode_id")
-                        if ep_id and ep_id not in confirmed_video_episodes:
-                            confirmed_video_episodes.add(ep_id)
-                            vid_incident = {
-                                "episode_id": ep_id,
-                                "worker_id": worker_id,
-                                "track_id": int(track_id) if track_id is not None else 1,
-                                "personId": worker_id,
-                                "workerTag": f"{worker_id} (Track #{track_id})" if track_id is not None else worker_id,
-                                "session_id": str(video_session_id),
-                                "zoneId": p_zid,
-                                "zoneName": p_zname,
-                                "cameraId": camera_id_str,
-                                "cameraName": camera_name_str,
-                                "sourceType": "video_file",
-                                "timestamp": datetime.datetime.now(datetime.timezone.utc),
-                                "detectedClasses": detected_objects,
-                                "confidenceScores": [d.get("confidence", 0.0) for d in detected_objects],
-                                "missingPPE": [cat],
-                                "complianceStatus": "VIOLATION",
-                                "personCount": len(evaluated_persons),
-                                "reviewStatus": "PENDING",
-                                "status": "OPEN",
-                                "reviewerNotes": "",
-                                "first_missing_timestamp": st_dict.get("first_missing_timestamp"),
-                                "confirmed_timestamp": st_dict.get("confirmed_timestamp"),
-                                "imageUrl": None,
-                                "evidenceImageReference": frame_annotated_b64,
-                                "processingMetadata": {
-                                    "video_timestamp_sec": timestamp_sec,
-                                    "accumulated_missing_sec": st_dict.get("accumulated_missing_sec", conf_dur),
-                                    "model": "YOLOv8",
-                                    "camera_id": camera_id_str,
-                                    "has_camera_polygons": has_camera_polygons
-                                },
-                                "createdAt": datetime.datetime.now(datetime.timezone.utc)
-                            }
-                            persist_confirmed_incident(vid_incident)
-                            persisted_incidents_list.append(vid_incident)
-                            frame_new_violations.append({
-                                "worker_id": worker_id,
-                                "track_id": track_id,
-                                "missing_ppe": cat,
-                                "zone_id": p_zid,
-                                "zone_name": p_zname,
-                                "episode_id": ep_id
-                            })
-
-                # 6. Automatic Resolution of Video Episodes upon Continuous Compliance
-                from ai_engine.temporal_compliance import get_session_temporal_tracker
-                vid_tracker = get_session_temporal_tracker(video_session_id)
-                resolved_in_frame = process_resolution_candidates(vid_tracker, video_session_id)
-                frame_new_resolutions = []
-                for r in resolved_in_frame:
+                for r in frame_new_resolutions:
                     r_epid = r.get("episode_id")
                     if r_epid:
                         resolved_video_episodes.add(r_epid)
-                        frame_new_resolutions.append(r)
 
                 if comp_status == "VIOLATION":
                     for m in missing_ppe:
@@ -988,29 +1149,7 @@ def detect_video():
                     if not any(od["name"] == d["name"] for od in overall_detected):
                         overall_detected.append(d)
 
-                frame_results.append({
-                    "frame_idx": total_frames_processed + 1,
-                    "timestamp_sec": timestamp_sec,
-                    "compliance_status": comp_status,
-                    "missing_ppe": missing_ppe,
-                    "persons_count": len(evaluated_persons),
-                    "annotated_image": frame_annotated_b64,
-                    "new_confirmed_violations": frame_new_violations,
-                    "new_resolved_violations": frame_new_resolutions,
-                    "persons": [
-                        {
-                            "worker_id": p.get("worker_id"),
-                            "track_id": p.get("track_id"),
-                            "zone_id": p.get("zone_id"),
-                            "zone_name": p.get("zone_name"),
-                            "compliant": p.get("compliant"),
-                            "uncertain": p.get("uncertain"),
-                            "uncertain_reason": p.get("uncertain_reason"),
-                            "missing_ppe": p.get("missing_ppe", [])
-                        }
-                        for p in evaluated_persons
-                    ]
-                })
+                frame_results.append(frame_data)
                 total_frames_processed += 1
 
             frame_count += 1
@@ -1046,11 +1185,254 @@ def detect_video():
         reset_session_tracker(video_session_id)
         reset_session_temporal(video_session_id)
         reset_session_spatial_zones(video_session_id)
+        clear_session_owner(video_session_id)
         if os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
             except Exception:
                 pass
+
+
+@detection_bp.route("/detect-video-stream", methods=["POST"])
+@detection_bp.route("/api/detect-video-stream", methods=["POST"])
+@token_required
+@supervisor_required
+@dev_fallback_allowed
+def detect_video_stream():
+    """
+    Milestone M2.1: Progressive Uploaded Video Monitoring via Server-Sent Events (SSE).
+    Streams sampled-frame AI detection results, new incident triggers, and compliance
+    progress as frames are processed sequentially in real-time.
+    """
+    if "file" not in request.files:
+        return jsonify({"message": "Video file is required"}), 400
+
+    video_file = request.files["file"]
+    valid, err_msg, ext = validate_uploaded_video(video_file)
+    if not valid:
+        return jsonify({"message": err_msg}), 400
+
+    from database import get_system_settings
+    sys_settings = get_system_settings()
+    default_ppe = list(sys_settings.get("default_required_ppe") or ["helmet", "vest", "boots"])
+
+    required_ppe = None
+    if "required_ppe" in request.form:
+        try:
+            parsed = json.loads(request.form["required_ppe"])
+            if isinstance(parsed, list) and len(parsed) > 0:
+                required_ppe = parsed
+        except Exception:
+            pass
+    if required_ppe is None:
+        required_ppe = default_ppe
+
+    camera_id = request.form.get("cameraId") or request.form.get("camera_id")
+    zone_id = request.form.get("zoneId") or request.form.get("zone_id")
+    conf_thresh = float(request.form.get("confidence_threshold", 0.35))
+    conf_dur = float(request.form.get("confirmation_duration_sec", 3.0))
+    sample_interval_sec = float(request.form.get("sample_interval_sec", 0.5))
+    max_frames = min(int(request.form.get("max_frames", 300)), 1000)
+
+    from ai_engine.zone_assignment import lookup_camera, reset_session_spatial_zones
+
+    if camera_id and str(camera_id).strip():
+        camera_doc = lookup_camera(camera_id=str(camera_id).strip(), zone_id=zone_id)
+    else:
+        camera_doc = lookup_camera(camera_id="uploaded_video")
+
+    has_camera_polygons = bool(camera_doc and camera_doc.get("zones"))
+    camera_id_str = str(camera_doc.get("_id", "uploaded_video"))
+    camera_name_str = str(camera_doc.get("name", "Uploaded Video Inspection"))
+
+    temp_fd, temp_path = tempfile.mkstemp(prefix="ppe_vid_stream_", suffix=f".{ext}")
+    os.close(temp_fd)
+    video_file.save(temp_path)
+    video_session_id = f"video_stream_{uuid.uuid4().hex[:8]}"
+
+    curr_user = getattr(request, "current_user", {})
+    if curr_user.get("id"):
+        register_session_owner(video_session_id, curr_user.get("id"))
+
+    cap = cv2.VideoCapture(temp_path)
+    if not cap.isOpened():
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        if camera_id and camera_id_str != "uploaded_video":
+            record_camera_frame_failure(camera_id_str, "Unsupported or corrupted video file")
+        return jsonify({"message": "Unsupported or corrupted video file"}), 400
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps <= 0 or np.isnan(fps):
+        fps = 25.0
+
+    total_raw_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    video_duration_sec = round(total_raw_frames / fps, 2) if (fps > 0 and total_raw_frames > 0) else 0.0
+    frame_interval = int(max(round(fps * sample_interval_sec), 1))
+
+    def generate_events():
+        confirmed_video_episodes = set()
+        resolved_video_episodes = set()
+        persisted_incidents_list = []
+        overall_missing = set()
+        overall_detected = []
+        total_frames_processed = 0
+        frame_count = 0
+
+        try:
+            # 1. Emit init event
+            init_payload = {
+                "session_id": video_session_id,
+                "fps": round(float(fps), 2),
+                "duration_sec": video_duration_sec,
+                "sample_interval_sec": sample_interval_sec,
+                "total_frames_in_video": total_raw_frames,
+                "max_frames_to_sample": max_frames,
+                "camera_profile": {
+                    "_id": camera_id_str,
+                    "name": camera_name_str,
+                    "has_camera_polygons": has_camera_polygons,
+                    "zones": camera_doc.get("zones", [])
+                }
+            }
+            yield f"event: init\ndata: {json.dumps(init_payload, default=str)}\n\n"
+
+            # 2. Sequential frame extraction & incremental event emission
+            while cap.isOpened() and total_frames_processed < max_frames:
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    break
+
+                if frame_count % frame_interval == 0:
+                    timestamp_sec = round(frame_count / fps, 3)
+                    (
+                        frame_data,
+                        detected_objects,
+                        comp_status,
+                        missing_ppe,
+                        frame_new_violations,
+                        frame_new_resolutions,
+                        new_persisted_incidents,
+                        frame_annotated_b64
+                    ) = process_video_frame_sample(
+                        frame=frame,
+                        timestamp_sec=timestamp_sec,
+                        frame_idx=total_frames_processed + 1,
+                        video_session_id=video_session_id,
+                        conf_thresh=conf_thresh,
+                        conf_dur=conf_dur,
+                        camera_doc=camera_doc,
+                        has_camera_polygons=has_camera_polygons,
+                        camera_id_str=camera_id_str,
+                        camera_name_str=camera_name_str,
+                        required_ppe=required_ppe,
+                        default_ppe=default_ppe,
+                        confirmed_video_episodes=confirmed_video_episodes,
+                        persisted_incidents_list=persisted_incidents_list,
+                        record_health=bool(camera_id and camera_id_str != "uploaded_video")
+                    )
+
+                    for r in frame_new_resolutions:
+                        r_epid = r.get("episode_id")
+                        if r_epid:
+                            resolved_video_episodes.add(r_epid)
+
+                    if comp_status == "VIOLATION":
+                        for m in missing_ppe:
+                            overall_missing.add(m)
+
+                    for d in detected_objects:
+                        if not any(od["name"] == d["name"] for od in overall_detected):
+                            overall_detected.append(d)
+
+                    total_frames_processed += 1
+
+                    # Emit completed frame event
+                    yield f"event: frame\ndata: {json.dumps(frame_data, default=str)}\n\n"
+
+                    # Emit incident events for newly confirmed episodes
+                    for inc in new_persisted_incidents:
+                        yield f"event: incident\ndata: {json.dumps(inc, default=str)}\n\n"
+
+                    # Emit resolution events for newly resolved episodes
+                    for res in frame_new_resolutions:
+                        yield f"event: resolution\ndata: {json.dumps(res, default=str)}\n\n"
+
+                    # Emit progress update
+                    progress_pct = round((timestamp_sec / video_duration_sec) * 100, 1) if video_duration_sec > 0 else round((total_frames_processed / max_frames) * 100, 1)
+                    progress_payload = {
+                        "processed_frames": total_frames_processed,
+                        "timestamp_sec": timestamp_sec,
+                        "progress_pct": min(progress_pct, 100.0),
+                        "latency_ms": frame_data.get("latency_ms", 0),
+                        "processing_fps": round(1000.0 / max(frame_data.get("latency_ms", 350), 1), 1)
+                    }
+                    yield f"event: progress\ndata: {json.dumps(progress_payload, default=str)}\n\n"
+
+                frame_count += 1
+
+            # Normal completion
+            if camera_id and camera_id_str != "uploaded_video":
+                record_camera_video_completed(camera_id_str, "Uploaded video inspection stream completed normally")
+
+            total_violations_found = len(confirmed_video_episodes)
+            total_resolutions_found = len(resolved_video_episodes)
+            overall_status = "VIOLATION" if total_violations_found > 0 else "COMPLIANT" if total_frames_processed > 0 else "UNCERTAIN"
+
+            done_payload = {
+                "overall_compliance_status": overall_status,
+                "overall_missing_ppe": list(overall_missing),
+                "overall_detected_classes": overall_detected,
+                "total_frames_processed": total_frames_processed,
+                "total_violations_found": total_violations_found,
+                "total_resolutions_found": total_resolutions_found,
+                "resolved_video_episodes": list(resolved_video_episodes),
+                "persisted_incidents": persisted_incidents_list,
+                "camera_profile": {
+                    "_id": camera_id_str,
+                    "name": camera_name_str,
+                    "has_camera_polygons": has_camera_polygons,
+                    "zones": camera_doc.get("zones", [])
+                }
+            }
+            yield f"event: done\ndata: {json.dumps(done_payload, default=str)}\n\n"
+
+        except GeneratorExit:
+            # Client cancelled or disconnected
+            pass
+        except Exception as ex:
+            error_payload = {
+                "message": str(ex),
+                "code": "PROCESSING_ERROR"
+            }
+            yield f"event: error\ndata: {json.dumps(error_payload, default=str)}\n\n"
+        finally:
+            if cap is not None:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+            reset_session_tracker(video_session_id)
+            reset_session_temporal(video_session_id)
+            reset_session_spatial_zones(video_session_id)
+            clear_session_owner(video_session_id)
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+
+    return Response(
+        stream_with_context(generate_events()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @detection_bp.route("/api/extract-video-frame", methods=["POST"])

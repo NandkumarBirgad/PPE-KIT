@@ -234,12 +234,20 @@ def associate_ppe_with_persons(persons, detected_objects, img_shape=None, min_sc
     min_score = min_score if min_score is not None else getattr(Config, "PPE_ASSOCIATION_MIN_SCORE", 0.35)
     ambiguity_margin = ambiguity_margin if ambiguity_margin is not None else getattr(Config, "PPE_ASSOCIATION_AMBIGUITY_MARGIN", 0.08)
 
+    if not persons:
+        return persons
+
+    if detected_objects is None or len(detected_objects) == 0:
+        for person in persons:
+            if "worn_ppe" not in person:
+                person["worn_ppe"] = []
+            if "ppe_associations" not in person:
+                person["ppe_associations"] = []
+        return persons
+
     for person in persons:
         person["worn_ppe"] = []
         person["ppe_associations"] = []
-
-    if not persons or not detected_objects:
-        return persons
 
     # 1. Compute anatomical regions for each person
     person_regions = [
@@ -419,13 +427,14 @@ PPE_BODY_MAPPING = {
     "safety gloves": "hands"
 }
 
-def detect_scanned_body_parts(person_box, img_shape=None, worn_ppe=None):
+def detect_scanned_body_parts(person_box, img_shape=None, worn_ppe=None, occluded_regions=None):
     """
     Independent body-region visibility assessment.
     Visibility is determined EXCLUSIVELY from:
       - person bounding box coordinates
       - image boundaries and clipping margins
       - anatomical aspect ratio and resolution
+      - physical occlusion markers / barriers
     NEVER uses PPE detections to establish region observability.
 
     Returns:
@@ -478,8 +487,15 @@ def detect_scanned_body_parts(person_box, img_shape=None, worn_ppe=None):
     is_partially_clipped_right = (img_w - margin_sides <= px2 < img_w)
     is_severely_clipped_lateral = is_clipped_left or is_clipped_right
 
+    occluded_set = set(str(r).lower().strip() for r in (occluded_regions or []))
+
     # 1. HEAD ASSESSMENT
-    if py1 < 0:
+    head_box = [max(0, int(px1)), max(0, int(py1)), min(img_w, int(px2)), min(img_h, int(py1 + 0.25 * ph))]
+    if "head" in occluded_set or "helmet" in occluded_set:
+        head_status = "unobservable"
+        head_reason = "head_occluded_by_object"
+        is_head_scanned = False
+    elif py1 < 0:
         head_status = "unobservable"
         head_reason = "head_cut_off_at_top_boundary"
         is_head_scanned = False
@@ -508,11 +524,21 @@ def detect_scanned_body_parts(person_box, img_shape=None, worn_ppe=None):
         "status": head_status,
         "reason": head_reason,
         "is_scanned": is_head_scanned,
-        "bbox": [max(0, int(px1)), max(0, int(py1)), min(img_w, int(px2)), min(img_h, int(py1 + 0.25 * ph))]
+        "bbox": head_box
     }
 
     # 2. FACE ASSESSMENT
-    if not is_head_scanned:
+    face_box = [
+        max(0, int(px1 + 0.20 * pw)),
+        max(0, int(py1 + 0.10 * ph)),
+        min(img_w, int(px1 + 0.80 * pw)),
+        min(img_h, int(py1 + 0.30 * ph))
+    ]
+    if "face" in occluded_set or "goggles" in occluded_set:
+        face_status = "unobservable"
+        face_reason = "face_occluded_by_object"
+        is_face_scanned = False
+    elif not is_head_scanned:
         face_status = "unobservable" if head_status == "unobservable" else "uncertain"
         face_reason = "head_not_observable"
         is_face_scanned = False
@@ -533,18 +559,18 @@ def detect_scanned_body_parts(person_box, img_shape=None, worn_ppe=None):
         "status": face_status,
         "reason": face_reason,
         "is_scanned": is_face_scanned,
-        "bbox": [
-            max(0, int(px1 + 0.20 * pw)),
-            max(0, int(py1 + 0.10 * ph)),
-            min(img_w, int(px1 + 0.80 * pw)),
-            min(img_h, int(py1 + 0.30 * ph))
-        ]
+        "bbox": face_box
     }
 
     # 3. TORSO ASSESSMENT
     torso_y1 = py1 + 0.25 * ph
     torso_y2 = py1 + 0.70 * ph
-    if torso_y1 >= img_h or torso_y2 <= 0:
+    torso_box = [max(0, int(px1)), max(0, int(torso_y1)), min(img_w, int(px2)), min(img_h, int(torso_y2))]
+    if "torso" in occluded_set or "vest" in occluded_set:
+        torso_status = "unobservable"
+        torso_reason = "torso_covered_by_object"
+        is_torso_scanned = False
+    elif torso_y1 >= img_h or torso_y2 <= 0:
         torso_status = "unobservable"
         torso_reason = "torso_outside_frame"
         is_torso_scanned = False
@@ -573,16 +599,22 @@ def detect_scanned_body_parts(person_box, img_shape=None, worn_ppe=None):
         "status": torso_status,
         "reason": torso_reason,
         "is_scanned": is_torso_scanned,
-        "bbox": [max(0, int(px1)), max(0, int(torso_y1)), min(img_w, int(px2)), min(img_h, int(torso_y2))]
+        "bbox": torso_box
     }
 
     # 4. FEET ASSESSMENT
     feet_y1 = py1 + 0.75 * ph
     feet_y2 = py2
+    feet_box = [max(0, int(px1)), max(0, int(feet_y1)), min(img_w, int(px2)), min(img_h, int(feet_y2))]
     is_cut_off_at_bottom = (py2 >= img_h - margin_bottom)
-    is_half_body = (aspect_ratio < 2.0) and (py2 >= img_h * 0.55)
+    # Human standing aspect ratio is typically 2.2 - 3.5. An aspect ratio < 1.85 indicates half-body / lower body occluded
+    is_half_body = (aspect_ratio < 1.85) or ((aspect_ratio < 2.0) and (py2 >= img_h * 0.55))
 
-    if is_cut_off_at_bottom:
+    if "feet" in occluded_set or "boots" in occluded_set:
+        feet_status = "unobservable"
+        feet_reason = "feet_hidden_behind_object"
+        is_feet_scanned = False
+    elif is_cut_off_at_bottom:
         feet_status = "unobservable"
         feet_reason = "feet_cut_off_at_bottom_boundary"
         is_feet_scanned = False
@@ -595,6 +627,10 @@ def detect_scanned_body_parts(person_box, img_shape=None, worn_ppe=None):
         feet_reason = "feet_outside_frame"
         is_feet_scanned = False
     elif ph < min_feet_h:
+        feet_status = "uncertain"
+        feet_reason = "insufficient_feet_resolution"
+        is_feet_scanned = False
+    elif (feet_y2 - feet_y1) < 25 or pw < 30:
         feet_status = "uncertain"
         feet_reason = "insufficient_feet_resolution"
         is_feet_scanned = False
@@ -611,7 +647,7 @@ def detect_scanned_body_parts(person_box, img_shape=None, worn_ppe=None):
         "status": feet_status,
         "reason": feet_reason,
         "is_scanned": is_feet_scanned,
-        "bbox": [max(0, int(px1)), max(0, int(feet_y1)), min(img_w, int(px2)), min(img_h, int(feet_y2))]
+        "bbox": feet_box
     }
 
     # 5. HANDS (Conservative geometric check)
@@ -706,8 +742,18 @@ def evaluate_compliance(
         p_box = person["bbox"]
         worn_set = set([w.lower() for w in person["worn_ppe"]])
 
+        # Collect explicit occlusions and other worker boxes
+        occluded = list(person.get("occluded_regions") or [])
+        for k, reg in [("torso_occluded", "torso"), ("feet_occluded", "feet"), ("head_occluded", "head"), ("face_occluded", "face")]:
+            if person.get(k) and reg not in occluded:
+                occluded.append(reg)
+
         # 1. Determine which body parts are actually scanned in the camera (independent of PPE detections)
-        body_scan = detect_scanned_body_parts(p_box, img_shape=img_shape)
+        body_scan = detect_scanned_body_parts(
+            p_box,
+            img_shape=img_shape,
+            occluded_regions=occluded
+        )
         scanned_regions = body_scan["scanned_regions"]
         vis_details = body_scan.get("visibility_details", {})
         person["body_region_visibility"] = vis_details
@@ -737,10 +783,10 @@ def evaluate_compliance(
             person["uncertain_reason"] = person.get("uncertain_reason") or "INVALID_ZONE_POLICY"
         elif person.get("required_ppe") is not None:
             worker_required = [normalize_ppe_class(r) for r in person.get("required_ppe")]
-            is_worker_uncertain = person.get("uncertain", False)
+            is_worker_uncertain = bool(person.get("is_uncertain") or (person.get("uncertain") and not person.get("temporal_state")))
         else:
             worker_required = raw_required
-            is_worker_uncertain = person.get("uncertain", False)
+            is_worker_uncertain = bool(person.get("is_uncertain") or (person.get("uncertain") and not person.get("temporal_state")))
 
         # 3. Filter required PPE to ONLY items corresponding to scanned body parts!
         applicable_required = []
@@ -811,24 +857,57 @@ def evaluate_compliance(
                     elif st.state == TemporalState.PENDING:
                         pending_missing.append(canonical_cls)
 
+                # Process all required PPE whose body part was unscanned/unobservable
+                for req in ignored_unscanned_ppe:
+                    canonical_cls = normalize_ppe_class(req)
+                    is_worn = (canonical_cls in worn_set)
+
+                    st = tracker.update_worker_ppe(
+                        track_id=track_id,
+                        ppe_category=canonical_cls,
+                        is_worn=is_worn,
+                        is_observable=False, # Body part is unobservable!
+                        is_required=True,
+                        is_uncertain=True,
+                        timestamp=ts,
+                        zone_id=zone_id
+                    )
+                    temporal_state_dict[canonical_cls] = st.to_dict()
+
+                    # Existing confirmed violations are not automatically erased by temporary occlusion
+                    if st.state == TemporalState.CONFIRMED:
+                        confirmed_missing.append(canonical_cls)
+
             person["missing_ppe"] = sort_canonical_ppe(confirmed_missing)
             person["pending_missing_ppe"] = sort_canonical_ppe(pending_missing)
             person["new_confirmed_violations"] = sort_canonical_ppe(new_confirmed_violations)
             person["temporal_state"] = temporal_state_dict
 
+            unscanned_unworn = [r for r in ignored_unscanned_ppe if normalize_ppe_class(r) not in worn_set]
+
             if is_uncertain:
                 person["compliant"] = False
                 person["uncertain"] = True
                 frame_uncertain = True
-            elif len(confirmed_missing) == 0:
-                person["compliant"] = True
-                person["uncertain"] = False
-            else:
+            elif len(confirmed_missing) > 0:
                 person["compliant"] = False
                 person["uncertain"] = False
                 frame_violations.append(person)
                 for m in confirmed_missing:
                     all_missing_set.add(m)
+            elif len(unscanned_unworn) > 0:
+                person["compliant"] = False
+                person["uncertain"] = True
+                first_unscanned_reg = PPE_BODY_MAPPING.get(normalize_ppe_class(unscanned_unworn[0]), "REGION")
+                if not person.get("uncertain_reason"):
+                    person["uncertain_reason"] = f"UNOBSERVABLE_{first_unscanned_reg.upper()}"
+                frame_uncertain = True
+            elif len(pending_missing) > 0:
+                person["compliant"] = True
+                person["uncertain"] = False
+            else:
+                person["compliant"] = True
+                person["uncertain"] = False
         else:
             # Fallback for static single-frame evaluation without active session tracking
             person["missing_ppe"] = instant_missing

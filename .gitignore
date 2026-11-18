@@ -39,3 +39,8 @@ frontend/dist/
 frontend/.env.local
 .DS_Store
 Thumbs.db
+
+# Test media files
+test_landscape_video.mp4
+test_portrait_video.mp4
+*.mp4

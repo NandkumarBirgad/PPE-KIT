@@ -403,6 +403,88 @@ class TestUploadedVideoDemonstration(unittest.TestCase):
         for p in created_paths:
             self.assertFalse(os.path.exists(p), f"Temporary file was not cleaned up: {p}")
 
+    # =========================================================================
+    # 5. Milestone M1 Correction: Worker Bounding Box Ingestion & Verification
+    # =========================================================================
+
+    @patch("routes.detection_routes.detect_ppe_in_frame")
+    def test_uploaded_video_response_includes_worker_bounding_boxes(self, mock_detect):
+        """
+        Milestone M1 Correction: Confirms worker bounding boxes [x1, y1, x2, y2]
+        are returned in frame_breakdown[].persons[], matching original coordinates,
+        while preserving worker_id, track_id, compliant, uncertain, and missing_ppe.
+        """
+        orig_box = [350, 120, 480, 500]
+        w = {
+            "bbox": list(orig_box),
+            "confidence": 0.94,
+            "track_id": 12,
+            "worker_id": "W-012"
+        }
+        mock_detect.side_effect = lambda *args, **kwargs: (None, [], [dict(w)])
+
+        res = self.client.post("/detect-video", data={
+            "file": (io.BytesIO(self.video_bytes), "bbox_verify.mp4"),
+            "max_frames": "3",
+            "sample_interval_sec": "0.1"
+        }, content_type="multipart/form-data")
+
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertIn("frame_breakdown", data)
+        self.assertGreater(len(data["frame_breakdown"]), 0)
+
+        first_frame = data["frame_breakdown"][0]
+        self.assertEqual(first_frame["persons_count"], 1)
+        self.assertGreater(len(first_frame["persons"]), 0)
+
+        person = first_frame["persons"][0]
+
+        # 1. Bounding box is present and matches original native coordinates exactly
+        self.assertIn("bbox", person)
+        self.assertEqual(person["bbox"], orig_box)
+
+        # 2. Existing fields remain present and populated
+        self.assertEqual(person["worker_id"], "W-012")
+        self.assertEqual(person["track_id"], 12)
+        self.assertIn("compliant", person)
+        self.assertIn("uncertain", person)
+        self.assertIn("uncertain_reason", person)
+        self.assertIn("missing_ppe", person)
+        self.assertIn("zone_id", person)
+        self.assertIn("zone_name", person)
+
+    @patch("routes.detection_routes.detect_ppe_in_frame")
+    def test_uploaded_video_person_without_valid_bbox_does_not_fail(self, mock_detect):
+        """
+        Milestone M1 Correction: A person without a valid bounding box (missing or None)
+        does not cause /detect-video to crash and returns bbox=None safely.
+        """
+        w_no_box = {
+            "confidence": 0.88,
+            "track_id": 14,
+            "worker_id": "W-014"
+            # 'bbox' key deliberately omitted
+        }
+        mock_detect.side_effect = lambda *args, **kwargs: (None, [], [dict(w_no_box)])
+
+        res = self.client.post("/detect-video", data={
+            "file": (io.BytesIO(self.video_bytes), "no_bbox.mp4"),
+            "max_frames": "2",
+            "sample_interval_sec": "0.1"
+        }, content_type="multipart/form-data")
+
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        first_frame = data["frame_breakdown"][0]
+        self.assertEqual(first_frame["persons_count"], 1)
+        person = first_frame["persons"][0]
+
+        # Bbox is safely None, and endpoint returns 200 without error
+        self.assertIn("bbox", person)
+        self.assertIsNone(person["bbox"])
+        self.assertEqual(person["worker_id"], "W-014")
+
 
 if __name__ == "__main__":
     unittest.main()
